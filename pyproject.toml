@@ -22,6 +22,9 @@ dependencies = [
     "openenv>=0.1.13",
 ]
 
+[project.scripts]
+server = "server.app:main"
+
 [project.optional-dependencies]
 openenv = [
     "openenv-core>=0.2.0",
