@@ -50,6 +50,8 @@ BENCHMARK = "email_triage"
 MAX_STEPS_PER_TASK = {"easy": 10, "medium": 25, "hard": 40}
 TEMPERATURE = 0.0  # Deterministic for reproducibility
 MAX_TOKENS = 1024
+MIN_SCORE = 0.0001
+MAX_SCORE = 0.9999
 
 # ─────────────────────────────────────────────────────────────────────────
 #  System prompt
@@ -196,6 +198,11 @@ def make_fallback_action(observation: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def clamp_score(score: float) -> float:
+    """Ensure score is strictly inside (0, 1)."""
+    return min(max(score, MIN_SCORE), MAX_SCORE)
+
+
 # ─────────────────────────────────────────────────────────────────────────
 #  Main inference loop
 # ─────────────────────────────────────────────────────────────────────────
@@ -296,11 +303,12 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
 
     # ── Structured output: task end (exact required format) ───────
     # Validator requires score strictly in (0, 1) — clamp away from exact endpoints
-    clamped_score = min(max(final_score, 0.0001), 0.9999)
+    clamped_score = clamp_score(final_score)
     rewards_str = ",".join(f"{r:.2f}" for r in step_rewards)
     success_val = str(success).lower()
     print(f"[END] success={success_val} steps={steps_taken} score={clamped_score:.4f} rewards={rewards_str}", flush=True)
 
+    grading["final_score"] = clamped_score
     return grading
 
 
@@ -338,8 +346,9 @@ def main():
             # Emit structured blocks even on failure so the validator sees them
             print(f"[START] task={task_id} env={BENCHMARK} model={MODEL_NAME}", flush=True)
             print(f"[STEP] step=1 action=null reward=0.00 done=false error={e}", flush=True)
-            print(f"[END] success=false steps=1 score=0.00 rewards=0.00", flush=True)
-            results[task_id] = {"final_score": 0.0, "error": str(e)}
+            fallback_score = clamp_score(0.0)
+            print(f"[END] success=false steps=1 score={fallback_score:.4f} rewards=0.00", flush=True)
+            results[task_id] = {"final_score": fallback_score, "error": str(e)}
 
     elapsed = time.time() - start_time
 
