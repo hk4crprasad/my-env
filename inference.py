@@ -286,7 +286,7 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
     final_score = grading.get("final_score", 0.0)
     dimensions = grading.get("dimension_scores", {})
     steps_taken = grading.get("steps_taken", step)
-    success = final_score > 0.0
+    success = 0.0 < final_score < 1.0
 
     print(f"\n  ── Results for {task_id.upper()} ──", flush=True)
     print(f"  Final Score: {final_score:.4f}", flush=True)
