@@ -308,8 +308,7 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
     success_val = str(success).lower()
     print(f"[END] success={success_val} steps={steps_taken} score={clamped_score:.4f} rewards={rewards_str}", flush=True)
 
-    grading["final_score"] = clamped_score
-    return grading
+    return {**grading, "final_score": clamped_score}
 
 
 def main():
