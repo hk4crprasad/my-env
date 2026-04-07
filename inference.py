@@ -208,14 +208,18 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
     obs = env.reset(seed=42, task_id=task_id)
     obs_dict = obs.model_dump()
 
-    print(f"\n{'='*60}")
-    print(f"  Task: {task_id.upper()} — {obs_dict.get('task_id', task_id)}")
-    print(f"  Emails: {obs_dict['inbox_stats'].get('total', 0)}")
-    print(f"  Max Steps: {MAX_STEPS_PER_TASK.get(task_id, 40)}")
-    print(f"{'='*60}")
+    print(f"\n{'='*60}", flush=True)
+    print(f"  Task: {task_id.upper()} — {obs_dict.get('task_id', task_id)}", flush=True)
+    print(f"  Emails: {obs_dict['inbox_stats'].get('total', 0)}", flush=True)
+    print(f"  Max Steps: {MAX_STEPS_PER_TASK.get(task_id, 40)}", flush=True)
+    print(f"{'='*60}", flush=True)
+
+    # ── Structured output: task start ────────────────────────────
+    print(f"[START] task={task_id}", flush=True)
 
     step = 0
     max_steps = MAX_STEPS_PER_TASK.get(task_id, 40)
+    cumulative_reward = 0.0
 
     while not obs_dict.get("done", False) and step < max_steps:
         # Format observation for LLM
@@ -238,55 +242,63 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
             llm_text = response.choices[0].message.content or ""
             action = parse_llm_response(llm_text)
         except Exception as e:
-            print(f"  ⚠ LLM error at step {step}: {e}")
+            print(f"  ⚠ LLM error at step {step}: {e}", flush=True)
             action = None
 
         if action is None:
-            print(f"  ⚠ Could not parse LLM response at step {step}, using fallback")
+            print(f"  ⚠ Could not parse LLM response at step {step}, using fallback", flush=True)
             action = make_fallback_action(obs_dict)
 
         # Step the environment
         email_id = action.get("email_id", "?")
         category = action.get("category", "?")
         print(f"  Step {step+1}: email={email_id[:12]} → category={category}, "
-              f"priority={action.get('priority', '?')}, dept={action.get('department', '?')}")
+              f"priority={action.get('priority', '?')}, dept={action.get('department', '?')}", flush=True)
 
         obs = env.step(action)
         obs_dict = obs.model_dump()
         step += 1
 
         feedback = obs_dict.get("action_feedback", "")
-        reward = obs_dict.get("step_reward", 0)
+        reward = obs_dict.get("step_reward", 0.0)
+        cumulative_reward += reward
         if feedback:
-            print(f"         reward={reward:+.2f} | {feedback[:80]}")
+            print(f"         reward={reward:+.2f} | {feedback[:80]}", flush=True)
+
+        # ── Structured output: per-step ───────────────────────────
+        print(f"[STEP] step={step} reward={reward:.4f}", flush=True)
 
     # Get final grading
     grading = obs_dict.get("metadata", {}).get("grading", {})
     final_score = grading.get("final_score", 0.0)
     dimensions = grading.get("dimension_scores", {})
+    steps_taken = grading.get("steps_taken", step)
 
-    print(f"\n  ── Results for {task_id.upper()} ──")
-    print(f"  Final Score: {final_score:.4f}")
-    print(f"  Dimensions: {json.dumps(dimensions, indent=4)}")
-    print(f"  Emails processed: {grading.get('emails_processed', 0)}/{grading.get('emails_total', 0)}")
-    print(f"  Steps used: {grading.get('steps_taken', step)}/{grading.get('max_steps', max_steps)}")
+    print(f"\n  ── Results for {task_id.upper()} ──", flush=True)
+    print(f"  Final Score: {final_score:.4f}", flush=True)
+    print(f"  Dimensions: {json.dumps(dimensions, indent=4)}", flush=True)
+    print(f"  Emails processed: {grading.get('emails_processed', 0)}/{grading.get('emails_total', 0)}", flush=True)
+    print(f"  Steps used: {steps_taken}/{grading.get('max_steps', max_steps)}", flush=True)
+
+    # ── Structured output: task end ───────────────────────────────
+    print(f"[END] task={task_id} score={final_score:.4f} steps={steps_taken}", flush=True)
 
     return grading
 
 
 def main():
     """Main entry point — run all 3 tasks and print summary."""
-    print("=" * 60)
-    print("  EMAIL TRIAGE ENVIRONMENT — BASELINE INFERENCE")
-    print("=" * 60)
+    print("=" * 60, flush=True)
+    print("  EMAIL TRIAGE ENVIRONMENT — BASELINE INFERENCE", flush=True)
+    print("=" * 60, flush=True)
 
     if not API_KEY:
-        print("\n⚠ Warning: No API key found (HF_TOKEN or API_KEY)")
-        print("  Set HF_TOKEN or API_KEY environment variable.")
-        print("  Falling back to local-only mode (no LLM calls).\n")
+        print("\n⚠ Warning: No API key found (HF_TOKEN or API_KEY)", flush=True)
+        print("  Set HF_TOKEN or API_KEY environment variable.", flush=True)
+        print("  Falling back to local-only mode (no LLM calls).\n", flush=True)
 
     if not MODEL_NAME:
-        print("\n⚠ Warning: MODEL_NAME not set. Using default.")
+        print("\n⚠ Warning: MODEL_NAME not set. Using default.", flush=True)
 
     # Initialise OpenAI client
     client = OpenAI(
@@ -304,29 +316,33 @@ def main():
             result = run_task(client, task_id)
             results[task_id] = result
         except Exception as e:
-            print(f"\n✗ Task {task_id} failed: {e}")
+            print(f"\n✗ Task {task_id} failed: {e}", flush=True)
+            # Emit structured blocks even on failure so the validator sees them
+            print(f"[START] task={task_id}", flush=True)
+            print(f"[STEP] step=1 reward=0.0000", flush=True)
+            print(f"[END] task={task_id} score=0.0000 steps=1", flush=True)
             results[task_id] = {"final_score": 0.0, "error": str(e)}
 
     elapsed = time.time() - start_time
 
     # ── Summary ───────────────────────────────────────────────────
-    print(f"\n{'='*60}")
-    print("  SUMMARY")
-    print(f"{'='*60}")
-    print(f"  {'Task':<10} {'Score':>8} {'Emails':>10} {'Steps':>8}")
-    print(f"  {'─'*10} {'─'*8} {'─'*10} {'─'*8}")
+    print(f"\n{'='*60}", flush=True)
+    print("  SUMMARY", flush=True)
+    print(f"{'='*60}", flush=True)
+    print(f"  {'Task':<10} {'Score':>8} {'Emails':>10} {'Steps':>8}", flush=True)
+    print(f"  {'─'*10} {'─'*8} {'─'*10} {'─'*8}", flush=True)
 
     for task_id in task_ids:
         r = results.get(task_id, {})
         score = r.get("final_score", 0.0)
         emails = f"{r.get('emails_processed', '?')}/{r.get('emails_total', '?')}"
         steps = f"{r.get('steps_taken', '?')}/{r.get('max_steps', '?')}"
-        print(f"  {task_id:<10} {score:>8.4f} {emails:>10} {steps:>8}")
+        print(f"  {task_id:<10} {score:>8.4f} {emails:>10} {steps:>8}", flush=True)
 
     avg_score = sum(r.get("final_score", 0.0) for r in results.values()) / len(results)
-    print(f"\n  Average Score: {avg_score:.4f}")
-    print(f"  Total Time: {elapsed:.1f}s")
-    print(f"{'='*60}\n")
+    print(f"\n  Average Score: {avg_score:.4f}", flush=True)
+    print(f"  Total Time: {elapsed:.1f}s", flush=True)
+    print(f"{'='*60}\n", flush=True)
 
 
 if __name__ == "__main__":
