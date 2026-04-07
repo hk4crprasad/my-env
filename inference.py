@@ -43,7 +43,7 @@ API_KEY = (
 MODEL_NAME = (
     os.getenv("MODEL_NAME")
     or os.getenv("OPENAI_CHAT_MODELS")
-    or "Qwen/Qwen2.5-72B-Instruct"
+    or "openai/gpt-oss-120b"
 )
 
 BENCHMARK = "email_triage"
