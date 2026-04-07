@@ -295,9 +295,11 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
     print(f"  Steps used: {steps_taken}/{grading.get('max_steps', max_steps)}", flush=True)
 
     # ── Structured output: task end (exact required format) ───────
+    # Validator requires score strictly in (0, 1) — clamp away from exact endpoints
+    clamped_score = min(max(final_score, 0.0001), 0.9999)
     rewards_str = ",".join(f"{r:.2f}" for r in step_rewards)
     success_val = str(success).lower()
-    print(f"[END] success={success_val} steps={steps_taken} score={final_score:.2f} rewards={rewards_str}", flush=True)
+    print(f"[END] success={success_val} steps={steps_taken} score={clamped_score:.4f} rewards={rewards_str}", flush=True)
 
     return grading
 
