@@ -43,8 +43,10 @@ API_KEY = (
 MODEL_NAME = (
     os.getenv("MODEL_NAME")
     or os.getenv("OPENAI_CHAT_MODELS")
+    or "Qwen/Qwen2.5-72B-Instruct"
 )
 
+BENCHMARK = "email_triage"
 MAX_STEPS_PER_TASK = {"easy": 10, "medium": 25, "hard": 40}
 TEMPERATURE = 0.0  # Deterministic for reproducibility
 MAX_TOKENS = 1024
@@ -215,11 +217,12 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
     print(f"{'='*60}", flush=True)
 
     # ── Structured output: task start ────────────────────────────
-    print(f"[START] task={task_id}", flush=True)
+    print(f"[START] task={task_id} env={BENCHMARK} model={MODEL_NAME}", flush=True)
 
     step = 0
     max_steps = MAX_STEPS_PER_TASK.get(task_id, 40)
-    cumulative_reward = 0.0
+    step_rewards: List[float] = []
+    last_error: Optional[str] = None
 
     while not obs_dict.get("done", False) and step < max_steps:
         # Format observation for LLM
@@ -227,6 +230,8 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
 
         if not obs_dict.get("emails"):
             break  # No more emails to process
+
+        last_error = None
 
         # Get LLM decision
         try:
@@ -242,12 +247,16 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
             llm_text = response.choices[0].message.content or ""
             action = parse_llm_response(llm_text)
         except Exception as e:
+            last_error = str(e)
             print(f"  ⚠ LLM error at step {step}: {e}", flush=True)
             action = None
 
         if action is None:
             print(f"  ⚠ Could not parse LLM response at step {step}, using fallback", flush=True)
             action = make_fallback_action(obs_dict)
+
+        # Build a compact one-line action string (no newlines)
+        action_str = json.dumps(action, separators=(",", ":")).replace("\n", " ")
 
         # Step the environment
         email_id = action.get("email_id", "?")
@@ -261,18 +270,23 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
 
         feedback = obs_dict.get("action_feedback", "")
         reward = obs_dict.get("step_reward", 0.0)
-        cumulative_reward += reward
+        done = obs_dict.get("done", False)
+        step_rewards.append(reward)
+
         if feedback:
             print(f"         reward={reward:+.2f} | {feedback[:80]}", flush=True)
 
-        # ── Structured output: per-step ───────────────────────────
-        print(f"[STEP] step={step} reward={reward:.4f}", flush=True)
+        # ── Structured output: per-step (exact required format) ───
+        error_val = last_error if last_error else "null"
+        done_val = str(done).lower()
+        print(f"[STEP] step={step} action={action_str} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
 
     # Get final grading
     grading = obs_dict.get("metadata", {}).get("grading", {})
     final_score = grading.get("final_score", 0.0)
     dimensions = grading.get("dimension_scores", {})
     steps_taken = grading.get("steps_taken", step)
+    success = final_score > 0.0
 
     print(f"\n  ── Results for {task_id.upper()} ──", flush=True)
     print(f"  Final Score: {final_score:.4f}", flush=True)
@@ -280,8 +294,10 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
     print(f"  Emails processed: {grading.get('emails_processed', 0)}/{grading.get('emails_total', 0)}", flush=True)
     print(f"  Steps used: {steps_taken}/{grading.get('max_steps', max_steps)}", flush=True)
 
-    # ── Structured output: task end ───────────────────────────────
-    print(f"[END] task={task_id} score={final_score:.4f} steps={steps_taken}", flush=True)
+    # ── Structured output: task end (exact required format) ───────
+    rewards_str = ",".join(f"{r:.2f}" for r in step_rewards)
+    success_val = str(success).lower()
+    print(f"[END] success={success_val} steps={steps_taken} score={final_score:.2f} rewards={rewards_str}", flush=True)
 
     return grading
 
@@ -318,9 +334,9 @@ def main():
         except Exception as e:
             print(f"\n✗ Task {task_id} failed: {e}", flush=True)
             # Emit structured blocks even on failure so the validator sees them
-            print(f"[START] task={task_id}", flush=True)
-            print(f"[STEP] step=1 reward=0.0000", flush=True)
-            print(f"[END] task={task_id} score=0.0000 steps=1", flush=True)
+            print(f"[START] task={task_id} env={BENCHMARK} model={MODEL_NAME}", flush=True)
+            print(f"[STEP] step=1 action=null reward=0.00 done=false error={e}", flush=True)
+            print(f"[END] success=false steps=1 score=0.00 rewards=0.00", flush=True)
             results[task_id] = {"final_score": 0.0, "error": str(e)}
 
     elapsed = time.time() - start_time
