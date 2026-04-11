@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import sys
 import os
+from collections import OrderedDict
 from typing import Any, Dict, Optional
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -42,18 +44,21 @@ class ResetRequest(BaseModel):
 
 class StepRequest(BaseModel):
     action: Dict[str, Any] = Field(..., description="Action dict with email_id, category, etc.")
+    session_id: Optional[str] = Field(default=None, description="Session ID returned from /reset (optional)")
 
 
 class ResetResponse(BaseModel):
     observation: Dict[str, Any]
     reward: Optional[float] = None
     done: bool = False
+    session_id: str = ""
 
 
 class StepResponse(BaseModel):
     observation: Dict[str, Any]
     reward: Optional[float] = None
     done: bool = False
+    session_id: str = ""
 
 
 class StateResponse(BaseModel):
@@ -87,8 +92,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Persistent environment instance (stateful across requests)
-env = EmailTriageEnvironment()
+# ── Session store: up to MAX_SESSIONS concurrent isolated environments ──
+MAX_SESSIONS = 20
+_sessions: OrderedDict[str, EmailTriageEnvironment] = OrderedDict()
+_latest_session_id: Optional[str] = None  # track most recently reset session
+
+
+def _get_session(session_id: Optional[str]) -> tuple[str, EmailTriageEnvironment]:
+    """Return (session_id, env) for the given id, or the latest active session."""
+    sid = session_id or _latest_session_id
+    if sid is None or sid not in _sessions:
+        raise HTTPException(
+            status_code=400,
+            detail="No active session. Call POST /reset first.",
+        )
+    return sid, _sessions[sid]
+
+
+def _create_session(episode_id: Optional[str]) -> tuple[str, EmailTriageEnvironment]:
+    """Create (or reuse) a session and return (session_id, env)."""
+    global _latest_session_id
+    sid = episode_id or str(uuid4())
+    if sid not in _sessions:
+        if len(_sessions) >= MAX_SESSIONS:
+            _sessions.popitem(last=False)  # evict oldest
+        _sessions[sid] = EmailTriageEnvironment()
+    _latest_session_id = sid
+    return sid, _sessions[sid]
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -114,11 +144,12 @@ async def root():
 
 @app.post("/reset", response_model=ResetResponse)
 async def reset(request: ResetRequest = ResetRequest()):
-    """Reset the environment for a new episode."""
+    """Reset the environment for a new episode. Returns a session_id for use with /step."""
     try:
+        sid, env = _create_session(request.episode_id)
         obs = env.reset(
             seed=request.seed,
-            episode_id=request.episode_id,
+            episode_id=sid,
             task_id=request.task_id,
         )
         obs_dict = obs.model_dump()
@@ -126,6 +157,7 @@ async def reset(request: ResetRequest = ResetRequest()):
             observation=obs_dict,
             reward=obs.reward,
             done=obs.done,
+            session_id=sid,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -133,7 +165,9 @@ async def reset(request: ResetRequest = ResetRequest()):
 
 @app.post("/step", response_model=StepResponse)
 async def step(request: StepRequest):
-    """Execute an agent action and return the resulting observation."""
+    """Execute an agent action. Pass session_id from /reset for multi-session support."""
+    sid, env = _get_session(request.session_id)
+
     try:
         action = EmailAction(**request.action)
     except Exception as e:
@@ -148,12 +182,14 @@ async def step(request: StepRequest):
         observation=obs_dict,
         reward=obs.reward,
         done=obs.done,
+        session_id=sid,
     )
 
 
 @app.get("/state", response_model=StateResponse)
-async def get_state():
-    """Return the current environment state."""
+async def get_state(session_id: Optional[str] = None):
+    """Return the current environment state. Pass session_id for multi-session support."""
+    sid, env = _get_session(session_id)
     s = env.state
     return StateResponse(
         episode_id=s.episode_id,

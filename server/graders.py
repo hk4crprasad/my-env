@@ -9,7 +9,12 @@ Each grader:
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import Any, Dict, List
+
+# Ensure project root is importable
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import EmailGroundTruth, VALID_CATEGORIES, VALID_DEPARTMENTS
 from server.tasks import TaskDefinition
