@@ -18,11 +18,12 @@ from __future__ import annotations
 import sys
 import os
 from collections import OrderedDict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 # Ensure project root is importable
@@ -31,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models import EmailAction, EmailObservation
 from server.environment import EmailTriageEnvironment
 from server.tasks import list_task_ids, TASKS
+from server.database import db
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Request / Response models
@@ -78,10 +80,23 @@ app = FastAPI(
     title="Email Triage Environment",
     description=(
         "An OpenEnv-compliant environment where AI agents learn to triage "
-        "emails: classify, prioritise, route, and respond."
+        "emails: classify, prioritise, route, and respond. "
+        "Persistent leaderboard and analytics powered by MongoDB."
     ),
-    version="1.0.0",
+    version="1.1.0",
 )
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    """Connect to MongoDB on server start."""
+    await db.connect()
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    """Gracefully close MongoDB connection."""
+    await db.close()
 
 # CORS for HF Spaces
 app.add_middleware(
@@ -133,12 +148,14 @@ async def health():
 
 @app.get("/")
 async def root():
-    """Root endpoint — basic info."""
+    """Root endpoint — basic info and global stats."""
+    stats = await db.get_summary_stats()
     return {
         "name": "email_triage_env",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "status": "healthy",
         "tasks": list_task_ids(),
+        "stats": stats,
     }
 
 
@@ -153,6 +170,14 @@ async def reset(request: ResetRequest = ResetRequest()):
             task_id=request.task_id,
         )
         obs_dict = obs.model_dump()
+
+        # Persist session to MongoDB (non-blocking, best-effort)
+        await db.save_session(
+            session_id=sid,
+            task_id=request.task_id,
+            seed=request.seed or 42,
+        )
+
         return ResetResponse(
             observation=obs_dict,
             reward=obs.reward,
@@ -178,6 +203,24 @@ async def step(request: StepRequest):
 
     obs = env.step(action)
     obs_dict = obs.model_dump()
+
+    # On episode completion, persist final score to MongoDB
+    if obs.done:
+        grading = obs_dict.get("metadata", {}).get("grading", {})
+        task_id = obs_dict.get("task_id", "unknown")
+        _state = env.state
+        await db.save_session(
+            session_id=sid,
+            task_id=task_id,
+            seed=42,  # seed stored at reset time; reuse here
+            completed=True,
+            final_score=grading.get("final_score"),
+            dimension_scores=grading.get("dimension_scores", {}),
+            steps_taken=grading.get("steps_taken", _state.step_count),
+            emails_processed=grading.get("emails_processed"),
+            emails_total=grading.get("emails_total"),
+        )
+
     return StepResponse(
         observation=obs_dict,
         reward=obs.reward,
@@ -219,6 +262,51 @@ async def tasks():
         }
         for tid, t in TASKS.items()
     }
+
+
+@app.get("/leaderboard")
+async def leaderboard(task_id: Optional[str] = None, limit: int = 10):
+    """Return top sessions by final score. Filter by task_id (easy|medium|hard)."""
+    if task_id and task_id not in ("easy", "medium", "hard"):
+        raise HTTPException(status_code=400, detail="task_id must be easy, medium, or hard")
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
+
+    entries = await db.get_leaderboard(task_id=task_id, limit=limit)
+
+    # Serialize datetime objects
+    for entry in entries:
+        if "completed_at" in entry and hasattr(entry["completed_at"], "isoformat"):
+            entry["completed_at"] = entry["completed_at"].isoformat()
+
+    return {
+        "task_id": task_id or "all",
+        "count": len(entries),
+        "storage": "mongodb" if db.online else "in-memory",
+        "entries": entries,
+    }
+
+
+@app.get("/analytics")
+async def analytics():
+    """Return per-task aggregated statistics (avg/best/worst score, run count)."""
+    stats = await db.get_task_analytics()
+    summary = await db.get_summary_stats()
+    return {
+        "summary": summary,
+        "by_task": stats,
+        "storage": "mongodb" if db.online else "in-memory",
+    }
+
+
+@app.get("/runs")
+async def inference_runs(limit: int = 20):
+    """Return most recent inference.py runs stored in MongoDB."""
+    runs = await db.get_inference_runs(limit=limit)
+    for run in runs:
+        if "timestamp" in run and hasattr(run["timestamp"], "isoformat"):
+            run["timestamp"] = run["timestamp"].isoformat()
+    return {"count": len(runs), "runs": runs}
 
 
 # ─────────────────────────────────────────────────────────────────────────
