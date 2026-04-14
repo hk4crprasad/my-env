@@ -286,7 +286,7 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
     final_score = grading.get("final_score", 0.0)
     dimensions = grading.get("dimension_scores", {})
     steps_taken = grading.get("steps_taken", step)
-    success = 0.0 < final_score < 1.0
+    success = final_score > 0.0
 
     print(f"\n  ── Results for {task_id.upper()} ──", flush=True)
     print(f"  Final Score: {final_score:.4f}", flush=True)
@@ -295,11 +295,9 @@ def run_task(client: OpenAI, task_id: str) -> Dict[str, Any]:
     print(f"  Steps used: {steps_taken}/{grading.get('max_steps', max_steps)}", flush=True)
 
     # ── Structured output: task end (exact required format) ───────
-    # Validator requires score strictly in (0, 1) — clamp away from exact endpoints
-    clamped_score = min(max(final_score, 0.0001), 0.9999)
     rewards_str = ",".join(f"{r:.2f}" for r in step_rewards)
     success_val = str(success).lower()
-    print(f"[END] success={success_val} steps={steps_taken} score={clamped_score:.4f} rewards={rewards_str}", flush=True)
+    print(f"[END] success={success_val} steps={steps_taken} score={final_score:.2f} rewards={rewards_str}", flush=True)
 
     return grading
 
@@ -335,8 +333,8 @@ def main():
             results[task_id] = result
         except Exception as e:
             print(f"\n✗ Task {task_id} failed: {e}", flush=True)
-            # Emit structured blocks even on failure so the validator sees them
-            print(f"[START] task={task_id} env={BENCHMARK} model={MODEL_NAME}", flush=True)
+            # [START] is already printed inside run_task before any exception can occur;
+            # emit terminal STEP+END so the validator always sees a complete block.
             print(f"[STEP] step=1 action=null reward=0.00 done=false error={e}", flush=True)
             print(f"[END] success=false steps=1 score=0.00 rewards=0.00", flush=True)
             results[task_id] = {"final_score": 0.0, "error": str(e)}
