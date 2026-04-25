@@ -12,7 +12,8 @@ build/
 .env
 .env.local
 .env.*.local
-
+graphify-out/
+.agents/
 # Virtual environments
 .venv/
 venv/
