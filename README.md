@@ -17,9 +17,18 @@ Haraprasad Hota · Subhendu Samal · Ashutosh Panigrahi
 [![Colab — Train](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Hk4crprasad/email-triage-env/blob/main/notebooks/train_grpo.ipynb)
 [![Colab — Demo & Test](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Hk4crprasad/email-triage-env/blob/main/notebooks/demo_and_test.ipynb)
 
-> **Trained adapter**: https://huggingface.co/Hk4crprasad/email-triage-grpo  
-> **HF Space (live)**: https://huggingface.co/spaces/Hk4crprasad/email-triage-env  
-> **GitHub**: https://github.com/hk4crprasad/my-env
+> **📝 Blog Post**: [We Trained an LLM to Triage Emails with GRPO](https://huggingface.co/blog/Hk4crprasad/email-triage-grpo-blog)  
+> **🎯 Pitch Slides**: [slides.html](slides.html) — open in any browser  
+> **🕸 Knowledge Graph**: [graphify-out/graph.html](graphify-out/graph.html) — 295 nodes, 13 communities  
+> **🧠 Trained adapter**: https://huggingface.co/Hk4crprasad/email-triage-grpo  
+> **🤗 HF Space (live)**: https://huggingface.co/spaces/Hk4crprasad/email-triage-env  
+> **💻 GitHub**: https://github.com/hk4crprasad/my-env
+
+---
+
+> **Zero-shot Qwen2.5-3B routes billing disputes to Engineering 60% of the time.**  
+> **After 300 GRPO steps on our environment: 50% correct routing on hard tasks, 92% on easy.**  
+> **We built what made that possible — an OpenEnv RL environment with 7 independent reward verifiers and 3-level curriculum learning.**
 
 ---
 
