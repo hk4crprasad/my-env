@@ -1,13 +1,15 @@
 """
 FastAPI application for the Email Triage Environment.
 
-Exposes the environment via HTTP endpoints compatible with the OpenEnv spec:
-  POST /reset  — start a new episode
-  POST /step   — execute an agent action
-  GET  /state  — retrieve current environment state
-  GET  /health — health check
-  GET  /schema — action/observation JSON schemas
-  GET  /tasks  — list available tasks
+OpenEnv-compliant endpoints:
+  POST /reset      — start a new episode
+  POST /step       — execute an agent action
+  GET  /state      — retrieve current environment state
+  GET  /health     — health check
+  GET  /schema     — action/observation JSON schemas
+  GET  /tasks      — list available tasks
+  GET  /rubric     — reward rubric definitions (all independent components)
+  GET  /curriculum — task progression for curriculum learning
 
 Usage:
     uvicorn server.app:app --host 0.0.0.0 --port 7860
@@ -26,12 +28,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-# Ensure project root is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import EmailAction, EmailObservation
 from server.environment import EmailTriageEnvironment
-from server.tasks import list_task_ids, TASKS
+from server.tasks import list_task_ids, get_curriculum_order, TASKS
+from server.graders import get_rubric_definitions
+from server.reward import REWARD_RUBRIC
 from server.database import db
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -46,7 +49,7 @@ class ResetRequest(BaseModel):
 
 class StepRequest(BaseModel):
     action: Dict[str, Any] = Field(..., description="Action dict with email_id, category, etc.")
-    session_id: Optional[str] = Field(default=None, description="Session ID returned from /reset (optional)")
+    session_id: Optional[str] = Field(default=None, description="Session ID from /reset")
 
 
 class ResetResponse(BaseModel):
@@ -77,28 +80,27 @@ class HealthResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════
 
 app = FastAPI(
-    title="Email Triage Environment",
+    title="Email Triage RL Environment",
     description=(
-        "An OpenEnv-compliant environment where AI agents learn to triage "
+        "An OpenEnv-compliant RL environment where AI agents learn to triage "
         "emails: classify, prioritise, route, and respond. "
-        "Persistent leaderboard and analytics powered by MongoDB."
+        "Seven independent reward components prevent reward hacking. "
+        "Three difficulty levels enable curriculum learning.\n\n"
+        "Theme: World Modeling — Personalized Tasks (#3.2)"
     ),
-    version="1.1.0",
+    version="2.0.0",
 )
 
 
 @app.on_event("startup")
 async def startup() -> None:
-    """Connect to MongoDB on server start."""
     await db.connect()
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
-    """Gracefully close MongoDB connection."""
     await db.close()
 
-# CORS for HF Spaces
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -110,11 +112,10 @@ app.add_middleware(
 # ── Session store: up to MAX_SESSIONS concurrent isolated environments ──
 MAX_SESSIONS = 20
 _sessions: OrderedDict[str, EmailTriageEnvironment] = OrderedDict()
-_latest_session_id: Optional[str] = None  # track most recently reset session
+_latest_session_id: Optional[str] = None
 
 
 def _get_session(session_id: Optional[str]) -> tuple[str, EmailTriageEnvironment]:
-    """Return (session_id, env) for the given id, or the latest active session."""
     sid = session_id or _latest_session_id
     if sid is None or sid not in _sessions:
         raise HTTPException(
@@ -125,7 +126,6 @@ def _get_session(session_id: Optional[str]) -> tuple[str, EmailTriageEnvironment
 
 
 def _create_session(episode_id: Optional[str]) -> tuple[str, EmailTriageEnvironment]:
-    """Create (or reuse) a session and return (session_id, env)."""
     global _latest_session_id
     sid = episode_id or str(uuid4())
     if sid not in _sessions:
@@ -137,31 +137,31 @@ def _create_session(episode_id: Optional[str]) -> tuple[str, EmailTriageEnvironm
 
 
 # ─────────────────────────────────────────────────────────────────────────
-#  Endpoints
+#  Core OpenEnv endpoints
 # ─────────────────────────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    """Health check — returns 200 if server is running."""
     return HealthResponse(status="healthy")
 
 
 @app.get("/")
 async def root():
-    """Root endpoint — basic info and global stats."""
     stats = await db.get_summary_stats()
     return {
         "name": "email_triage_env",
-        "version": "1.1.0",
+        "version": "2.0.0",
+        "theme": "World Modeling — Personalized Tasks (#3.2)",
         "status": "healthy",
         "tasks": list_task_ids(),
+        "reward_components": list(REWARD_RUBRIC.keys()),
         "stats": stats,
     }
 
 
 @app.post("/reset", response_model=ResetResponse)
 async def reset(request: ResetRequest = ResetRequest()):
-    """Reset the environment for a new episode. Returns a session_id for use with /step."""
+    """Reset the environment for a new episode. Returns a session_id for /step."""
     try:
         sid, env = _create_session(request.episode_id)
         obs = env.reset(
@@ -171,7 +171,6 @@ async def reset(request: ResetRequest = ResetRequest()):
         )
         obs_dict = obs.model_dump()
 
-        # Persist session to MongoDB (non-blocking, best-effort)
         await db.save_session(
             session_id=sid,
             task_id=request.task_id,
@@ -196,15 +195,11 @@ async def step(request: StepRequest):
     try:
         action = EmailAction(**request.action)
     except Exception as e:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Invalid action: {e}",
-        )
+        raise HTTPException(status_code=422, detail=f"Invalid action: {e}")
 
     obs = env.step(action)
     obs_dict = obs.model_dump()
 
-    # On episode completion, persist final score to MongoDB
     if obs.done:
         grading = obs_dict.get("metadata", {}).get("grading", {})
         task_id = obs_dict.get("task_id", "unknown")
@@ -212,7 +207,7 @@ async def step(request: StepRequest):
         await db.save_session(
             session_id=sid,
             task_id=task_id,
-            seed=42,  # seed stored at reset time; reuse here
+            seed=42,
             completed=True,
             final_score=grading.get("final_score"),
             dimension_scores=grading.get("dimension_scores", {}),
@@ -231,50 +226,99 @@ async def step(request: StepRequest):
 
 @app.get("/state", response_model=StateResponse)
 async def get_state(session_id: Optional[str] = None):
-    """Return the current environment state. Pass session_id for multi-session support."""
     sid, env = _get_session(session_id)
     s = env.state
-    return StateResponse(
-        episode_id=s.episode_id,
-        step_count=s.step_count,
-    )
+    return StateResponse(episode_id=s.episode_id, step_count=s.step_count)
 
 
 @app.get("/schema")
 async def schema():
-    """Return JSON schemas for Action and Observation models."""
+    """JSON schemas for Action and Observation models."""
     return {
         "action": EmailAction.model_json_schema(),
         "observation": EmailObservation.model_json_schema(),
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────
+#  Discovery endpoints
+# ─────────────────────────────────────────────────────────────────────────
+
 @app.get("/tasks")
 async def tasks():
-    """List all available tasks with descriptions."""
+    """List all available tasks with descriptions and scoring weights."""
     return {
         tid: {
             "name": t.name,
             "difficulty": t.difficulty,
+            "curriculum_level": t.curriculum_level,
             "num_emails": t.num_emails,
             "max_steps": t.max_steps,
+            "optimal_steps": t.optimal_steps,
             "description": t.description,
+            "scoring_weights": t.scoring_weights,
         }
         for tid, t in TASKS.items()
     }
 
 
+@app.get("/rubric")
+async def rubric():
+    """Return all reward rubric definitions.
+
+    Each reward component is independent — an agent cannot game one without
+    independently satisfying the others.
+    """
+    step_rubric = REWARD_RUBRIC
+    episode_rubric = get_rubric_definitions()
+    return {
+        "description": (
+            "Seven independent per-step reward components + five episode-level graders. "
+            "Independence prevents reward hacking: optimising one component does not "
+            "automatically improve others."
+        ),
+        "per_step_rewards": step_rubric,
+        "episode_graders": episode_rubric,
+        "anti_hacking_design": [
+            "Format compliance checked before any content reward is applied",
+            "Re-processing same email returns -0.15 with no other reward",
+            "Escalation is graded independently of routing",
+            "Response quality uses hidden keyword sets (not shown to agent)",
+            "Priority accuracy uses non-linear scoring (off-by-2+ gets 0, not partial)",
+        ],
+    }
+
+
+@app.get("/curriculum")
+async def curriculum():
+    """Return the curriculum progression (easy → medium → hard)."""
+    return {
+        "description": (
+            "Three tasks in increasing difficulty. Start with 'easy' to ensure "
+            "non-zero reward before advancing. Curriculum training schedule: "
+            "train easy until avg reward > 0.6, then medium until > 0.5, then hard."
+        ),
+        "progression": get_curriculum_order(),
+        "advancement_thresholds": {
+            "easy_to_medium": 0.60,
+            "medium_to_hard": 0.50,
+        },
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  Leaderboard / Analytics
+# ─────────────────────────────────────────────────────────────────────────
+
 @app.get("/leaderboard")
 async def leaderboard(task_id: Optional[str] = None, limit: int = 10):
-    """Return top sessions by final score. Filter by task_id (easy|medium|hard)."""
+    """Top sessions by final score. Filter by task_id (easy|medium|hard)."""
     if task_id and task_id not in ("easy", "medium", "hard"):
         raise HTTPException(status_code=400, detail="task_id must be easy, medium, or hard")
     if limit < 1 or limit > 100:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
 
     entries = await db.get_leaderboard(task_id=task_id, limit=limit)
-
-    # Serialize datetime objects
     for entry in entries:
         if "completed_at" in entry and hasattr(entry["completed_at"], "isoformat"):
             entry["completed_at"] = entry["completed_at"].isoformat()
@@ -289,7 +333,7 @@ async def leaderboard(task_id: Optional[str] = None, limit: int = 10):
 
 @app.get("/analytics")
 async def analytics():
-    """Return per-task aggregated statistics (avg/best/worst score, run count)."""
+    """Per-task aggregated statistics (avg/best/worst score, run count)."""
     stats = await db.get_task_analytics()
     summary = await db.get_summary_stats()
     return {
@@ -301,7 +345,7 @@ async def analytics():
 
 @app.get("/runs")
 async def inference_runs(limit: int = 20):
-    """Return most recent inference.py runs stored in MongoDB."""
+    """Most recent inference.py runs stored in the database."""
     runs = await db.get_inference_runs(limit=limit)
     for run in runs:
         if "timestamp" in run and hasattr(run["timestamp"], "isoformat"):
@@ -314,9 +358,7 @@ async def inference_runs(limit: int = 20):
 # ─────────────────────────────────────────────────────────────────────────
 
 def main():
-    """Run the server directly."""
     import uvicorn
-
     port = int(os.environ.get("PORT", 7860))
     uvicorn.run(app, host="0.0.0.0", port=port)
 

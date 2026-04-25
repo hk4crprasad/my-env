@@ -1,6 +1,30 @@
 spec_version: 1
 name: email_triage_env
+display_name: Email Triage RL Environment
+description: >
+  An OpenEnv-compliant RL environment for training LLMs to triage emails:
+  classify, prioritise, route, and draft responses. Three difficulty levels
+  support curriculum learning. Seven independent reward components prevent
+  reward hacking. Theme: World Modeling — Personalized Tasks (#3.2).
 type: space
 runtime: fastapi
 app: server.app:app
 port: 7860
+version: "2.0.0"
+tags:
+  - email
+  - triage
+  - classification
+  - rl
+  - curriculum
+  - personalized-tasks
+tasks:
+  - id: easy
+    description: Basic email classification (5 emails, 1 dimension)
+    curriculum_level: 0
+  - id: medium
+    description: Classification + priority + routing (10 emails, 3 dimensions)
+    curriculum_level: 1
+  - id: hard
+    description: Full triage with response drafts (20 emails, 5 dimensions)
+    curriculum_level: 2

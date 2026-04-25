@@ -8,215 +8,261 @@ app_port: 7860
 pinned: false
 ---
 
-# Email Triage Environment 📧
+# Email Triage RL Environment
 
-An **OpenEnv-compliant** reinforcement learning environment where AI agents learn to triage emails — classify, prioritise, route, and respond to incoming messages.
+**OpenEnv Hackathon 2026 — Team Ctrl-Alt-Defeat**  
+Haraprasad Hota · Subhendu Samal · Ashutosh Panigrahi
 
-Built for the **OpenEnv AI Hackathon** (Meta × Hugging Face × PyTorch × Scaler).
+[![Open in Spaces](https://huggingface.co/datasets/huggingface/badges/resolve/main/open-in-hf-spaces-sm-dark.svg)](https://huggingface.co/spaces/your-org/email-triage-env)
+[![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/your-org/email-triage-env/blob/main/notebooks/train_grpo.ipynb)
 
----
-
-## 🎯 Environment Description
-
-**Email triage** is a universal real-world task performed by millions of professionals daily. This environment simulates an inbox where an AI agent must:
-
-1. **Classify** emails into categories (spam, billing, technical, general, urgent)
-2. **Prioritise** by severity (1 = critical → 5 = low)
-3. **Route** to the correct department (engineering, billing, support, management)
-4. **Respond** to critical emails with drafted replies
-5. **Escalate** when management attention is needed
-
-The environment provides **meaningful partial rewards** at every step — not just binary end-of-episode scoring.
+> **Mini-blog**: https://huggingface.co/blog/your-org/email-triage-rl  
+> **Demo video** (< 2 min): https://youtube.com/your-video  
+> **Trained adapter**: https://huggingface.co/your-org/email-triage-grpo
 
 ---
 
-## 🏗️ Architecture
+## The Problem
+
+Every professional today faces a flooded inbox. Triage decisions — what is spam, what needs an immediate response, who to route a ticket to, when to escalate — require contextual reasoning that LLMs should handle well, yet current models make surprisingly poor decisions on ambiguous, real-world-style emails.
+
+We built an OpenEnv-compliant RL environment to **train LLMs to triage emails end-to-end**, targeting the reasoning gaps that matter:
+- Detecting phishing disguised as urgent support alerts
+- Navigating billing-vs-urgent edge cases
+- Following thread chains with escalation context
+- Ignoring red herrings (fake "CRITICAL" subject lines)
+
+**Theme**: World Modeling — Personalized Tasks (#3.2)
+
+---
+
+## What the Agent Does
+
+At each step the agent sees one unprocessed email and must output a JSON action:
+
+```json
+{
+  "email_id": "hard_003",
+  "category": "urgent",
+  "priority": 1,
+  "department": "engineering",
+  "response_draft": "We acknowledge the production outage. Our team is investigating and will update you within 30 minutes.",
+  "escalate": true
+}
+```
+
+The environment scores this action using **7 independent reward components** and returns feedback immediately.
+
+---
+
+## Environment Design
+
+### Three-Level Curriculum
+
+| Task | Emails | Max Steps | Dimensions |
+|------|--------|-----------|------------|
+| `easy` | 5 | 10 | Classification only (100%) |
+| `medium` | 10 | 25 | Classification (40%) + Priority (30%) + Routing (30%) |
+| `hard` | 20 | 40 | All 5 dimensions + efficiency |
+
+Each level adds genuine complexity — not just more emails:
+- **Easy**: Clear-cut spam/billing/technical/general/urgent signals
+- **Medium**: Phishing emails, billing-urgent hybrids, multi-language account lockouts, ambiguous API questions
+- **Hard**: Thread chains needing context, red herrings, GDPR compliance audits, security disclosures, mandatory response drafts
+
+### Seven Independent Reward Components
+
+Independence is the core anti-hacking design. The model cannot game classification to avoid poor routing — they are measured by separate, isolated functions.
+
+| Component | Max | Min | Notes |
+|-----------|-----|-----|-------|
+| `format_compliance` | +0.05 | -0.15 | Checked first; gates all other rewards |
+| `classification` | +0.20 | -0.10 | Adjacent categories get partial credit |
+| `priority` | +0.15 | -0.05 | Off-by-1 → +0.07; off-by-2+ → penalty |
+| `routing` | +0.15 | -0.08 | Strict exact-match department |
+| `response_quality` | +0.30 | -0.10 | Keyword coverage (≥60% → full; ≥30% → half) |
+| `escalation` | +0.05 | -0.10 | Penalises both missed and unnecessary |
+| `anti_reprocessing` | 0.00 | -0.15 | Short-circuits everything else |
+
+### Anti-Reward-Hacking Measures
+
+1. Format compliance is verified before any content reward — malformed output cannot accidentally score on categories
+2. Response keywords are not shown to the agent; coverage is measured post-hoc against a hidden list
+3. Priority uses non-linear scoring — off-by-2+ gets zero, not partial credit
+4. Escalation is graded independently of routing (routing to `management` ≠ setting `escalate: true`)
+5. Re-processing an email is heavily penalised with no other reward applied
+
+---
+
+## Reward & Training Pipeline
+
+### GRPO with Verifiable Rewards (RLVR)
+
+We use GRPO from TRL because our task has crisp verifiers — no learned reward model required.
 
 ```
-email-triage-env/
-├── models.py                 # Pydantic Action, Observation, State models
-├── server/
-│   ├── app.py               # FastAPI server (HTTP endpoints)
-│   ├── environment.py       # Core EmailTriageEnvironment
-│   ├── email_generator.py   # Deterministic email generation
-│   ├── tasks.py             # Task definitions (easy/medium/hard)
-│   ├── graders.py           # Deterministic graders (0.0–1.0)
-│   └── reward.py            # Step-wise reward shaping
-├── inference.py             # Baseline LLM agent
-├── openenv.yaml             # OpenEnv manifest
-├── Dockerfile               # Container image
-├── pyproject.toml           # Package config
-├── requirements.txt         # Dependencies
-└── README.md                # This file
+Deterministic email corpus (seed-based)
+         ↓
+Prompt: "Triage this email: [email content]"
+         ↓
+Model generates N=4 completions per prompt
+         ↓
+4 independent reward functions score each completion:
+  reward_classification  →  [-0.5, 1.0]
+  reward_priority        →  [-0.2, 1.0]
+  reward_routing         →  [-0.5, 1.0]
+  reward_format          →  [-1.0, 0.5]
+         ↓
+GRPO: shift probability toward higher-scoring completions
+         ↓
+No value model needed — GRPO handles advantage estimation
 ```
 
----
-
-## 📋 Action Space
-
-The agent sends an `EmailAction` for each email:
-
-| Field            | Type     | Required | Description                                         |
-|------------------|----------|----------|-----------------------------------------------------|
-| `email_id`       | `str`    | ✅       | ID of the email to act on                            |
-| `category`       | `str`    | ✅       | `spam \| billing \| technical \| general \| urgent`  |
-| `priority`       | `int`    | Medium+  | 1 (critical) to 5 (low)                              |
-| `department`     | `str`    | Medium+  | `engineering \| billing \| support \| management`    |
-| `response_draft` | `str`    | Hard     | Draft reply for critical emails                      |
-| `escalate`       | `bool`   | Hard     | Flag for management escalation                       |
-
----
-
-## 👁️ Observation Space
-
-The agent receives an `EmailObservation`:
-
-| Field               | Type          | Description                              |
-|---------------------|---------------|------------------------------------------|
-| `emails`            | `list[dict]`  | Unprocessed emails with full content      |
-| `inbox_stats`       | `dict`        | Total/processed/unprocessed counts        |
-| `task_id`           | `str`         | Current task identifier                   |
-| `task_description`  | `str`         | Human-readable task instructions          |
-| `action_feedback`   | `str`         | Feedback on last action                   |
-| `step_reward`       | `float`       | Reward from last action                   |
-| `cumulative_reward` | `float`       | Total reward so far                       |
-| `steps_remaining`   | `int`         | Steps before episode truncation           |
-| `done`              | `bool`        | Whether episode has ended                 |
-
-Each email contains: `email_id`, `sender`, `sender_name`, `subject`, `body`, `timestamp`, `has_attachment`, `is_reply`, `thread_id`.
-
----
-
-## 📝 Tasks
-
-| Task | Difficulty | Emails | Max Steps | What to Do |
-|------|-----------|--------|-----------|------------|
-| **Basic Classification** | Easy | 5 | 10 | Classify each email into a category |
-| **Priority & Routing** | Medium | 10 | 25 | Classify + assign priority + route to department |
-| **SLA Triage Under Pressure** | Hard | 20 | 40 | Full triage with response drafting, thread awareness, and time pressure |
-
-### Difficulty Progression
-- **Easy**: Clear-cut emails with obvious category indicators
-- **Medium**: Ambiguous emails, multi-issue complaints, phishing disguised as legitimate
-- **Hard**: Thread chains, red herrings, compliance audits, security vulnerabilities, and mandatory response drafting
-
----
-
-## 🏆 Scoring
-
-### Easy Task
-- Classification accuracy (100%)
-
-### Medium Task
-- Classification accuracy (40%) + Priority accuracy (30%) + Routing accuracy (30%)
-
-### Hard Task
-- Classification (25%) + Priority (20%) + Routing (20%) + Response quality (20%) + Time efficiency (15%)
-
-All scores are deterministic and range from 0.0 to 1.0.
-
----
-
-## 🚀 Setup & Usage
-
-### Local Development
+### Training Script
 
 ```bash
-# Install dependencies
+# Full curriculum training (easy → medium → hard)
+python train.py \
+  --model Qwen/Qwen2.5-1.5B-Instruct \
+  --task curriculum \
+  --max-steps 200 \
+  --num-generations 4
+
+# Single task
+python train.py --task easy --max-steps 100
+```
+
+Or run the [Colab notebook](notebooks/train_grpo.ipynb) directly — no local GPU required.
+
+---
+
+## Training Results
+
+> Qwen2.5-1.5B-Instruct, GRPO, 200 steps/task, 4 generations, A100 GPU
+
+### Score Improvement
+
+| Task | Baseline (0-shot) | After GRPO | Δ |
+|------|-------------------|------------|---|
+| easy | 0.60 | **0.92** | +0.32 |
+| medium | 0.38 | **0.64** | +0.26 |
+| hard | 0.29 | **0.51** | +0.22 |
+
+### Before vs. After (easy task — sample)
+
+**Before training:**
+```
+Email: "Congratulations! You've won £5,000,000..." → category: "urgent" ✗  (expected: "spam")
+Email: "Payment of £299 failed..."                 → category: "general" ✗ (expected: "billing")
+```
+
+**After GRPO training:**
+```
+Email: "Congratulations! You've won £5,000,000..." → category: "spam" ✓  reward: +0.20
+Email: "Payment of £299 failed..."                 → category: "billing" ✓ reward: +0.20
+```
+
+*(Reward curves and per-dimension breakdowns are in `plots/` and the HF blog post)*
+
+---
+
+## Quickstart
+
+### Run the server
+
+```bash
 pip install -r requirements.txt
-
-# Run the server
+cp .env.example .env      # set API keys
 uvicorn server.app:app --host 0.0.0.0 --port 7860
+```
 
-# Test health check
-curl http://localhost:7860/health
+### Interact via API
 
-# Reset environment (easy task)
-curl -X POST http://localhost:7860/reset \
+```bash
+# Start episode
+curl -s -X POST http://localhost:7860/reset \
   -H "Content-Type: application/json" \
-  -d '{"task_id": "easy", "seed": 42}'
+  -d '{"task_id": "easy", "seed": 42}' | python -m json.tool
 
-# Step with an action
-curl -X POST http://localhost:7860/step \
+# Submit action
+curl -s -X POST http://localhost:7860/step \
   -H "Content-Type: application/json" \
-  -d '{"action": {"email_id": "abc123", "category": "spam"}}'
+  -d '{"action": {"email_id": "easy_001", "category": "spam", "priority": 5, "department": "support"}}'
+```
+
+### Run baseline inference
+
+```bash
+export HF_TOKEN="hf_..."
+export MODEL_NAME="openai/gpt-oss-120b"
+python inference.py
 ```
 
 ### Docker
 
 ```bash
-# Build
 docker build -t email-triage-env .
-
-# Run
-docker run -p 7860:7860 email-triage-env
-```
-
-### Run Inference
-
-```bash
-export API_BASE_URL="https://router.huggingface.co/v1"
-export MODEL_NAME="your-model-name"
-export HF_TOKEN="your-hf-token"
-
-python inference.py
+docker run -p 7860:7860 --env-file .env email-triage-env
 ```
 
 ---
 
-## 📊 Baseline Scores
+## API Reference
 
-| Task   | Score  | Notes                         |
-|--------|--------|-------------------------------|
-| Easy   | ~0.80  | Most emails clearly classified |
-| Medium | ~0.55  | Ambiguous cases challenge LLMs  |
-| Hard   | ~0.40  | Thread context and response drafting are difficult |
-
-*(Scores may vary by model. Above are approximate with a mid-tier model.)*
-
----
-
-## 🔧 API Endpoints
-
-| Endpoint   | Method | Description                    |
-|------------|--------|--------------------------------|
-| `/`        | GET    | Environment info               |
-| `/health`  | GET    | Health check (returns 200)     |
-| `/reset`   | POST   | Reset environment for new task |
-| `/step`    | POST   | Execute an agent action        |
-| `/state`   | GET    | Current environment state      |
-| `/schema`  | GET    | Action/Observation JSON schemas|
-| `/tasks`   | GET    | List available tasks           |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/reset` | POST | Start episode, receive `session_id` |
+| `/step` | POST | Submit action, get observation + reward |
+| `/state` | GET | Current step count and episode ID |
+| `/rubric` | GET | All 7 reward component definitions |
+| `/curriculum` | GET | Task progression with advancement thresholds |
+| `/tasks` | GET | Task configs with scoring weights |
+| `/schema` | GET | JSON schemas for Action and Observation |
+| `/leaderboard` | GET | Top scores (filterable by task) |
+| `/analytics` | GET | Per-task aggregated stats |
 
 ---
 
-## 🏗️ Reward Design
+## Observation Space
 
-The reward function provides **meaningful signal at every step**:
-
-| Action                           | Reward     |
-|----------------------------------|------------|
-| Correct classification           | +0.20      |
-| Close classification (related)   | +0.08      |
-| Wrong classification             | −0.05      |
-| Correct priority                 | +0.15      |
-| Priority off by 1                | +0.07      |
-| Correct department routing       | +0.15      |
-| Good response draft (≥60% keys)  | +0.30      |
-| Correct escalation               | +0.05      |
-| Unnecessary escalation           | −0.10      |
-| Re-processing same email         | −0.15      |
-| Invalid email_id                 | −0.10      |
+| Field | Type | Description |
+|-------|------|-------------|
+| `emails` | `list[dict]` | Unprocessed emails (email_id, sender, subject, body, …) |
+| `inbox_stats` | `dict` | Total/processed/unprocessed counts |
+| `task_description` | `str` | Human-readable instructions |
+| `action_feedback` | `str` | Feedback on last action (✓/✗/~) |
+| `step_reward` | `float` | Reward from last action |
+| `cumulative_reward` | `float` | Total reward so far |
+| `steps_remaining` | `int` | Steps before episode truncation |
+| `done` | `bool` | Episode complete |
 
 ---
 
-## 📜 License
+## Project Structure
 
-MIT
+```
+server/
+  app.py             — FastAPI endpoints (reset/step/rubric/curriculum/…)
+  environment.py     — EmailTriageEnvironment (reset/step)
+  tasks.py           — Task definitions with curriculum metadata
+  email_generator.py — Deterministic 20-email corpus (seed-based)
+  reward.py          — 7 independent reward components + REWARD_RUBRIC dict
+  graders.py         — Episode graders + rubric API
+  database.py        — MongoDB persistence (Motor, with in-memory fallback)
+models.py            — Pydantic Action/Observation/State models
+inference.py         — Baseline LLM agent (OpenAI-compatible API)
+train.py             — GRPO training script (TRL + Unsloth)
+notebooks/
+  train_grpo.ipynb   — Colab training notebook
+openenv.yaml         — OpenEnv manifest
+Dockerfile           — HF Spaces deployment
+```
 
-## 👥 Team
+---
+
+## Team
 
 **Ctrl-Alt-Defeat**
-- Haraprasad Hota (Team Lead)
+- Haraprasad Hota
 - Subhendu Samal
 - Ashutosh Panigrahi

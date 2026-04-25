@@ -1,13 +1,15 @@
 """
 Task definitions for the Email Triage Environment.
 
-Each task specifies what the agent should accomplish, how many emails
-to process, the maximum allowed steps, and a human-readable description.
+Three difficulty levels forming a natural curriculum:
+  easy   → classification only (5 emails, clear-cut)
+  medium → classification + priority + routing (10 emails, some ambiguity)
+  hard   → all dimensions + response drafts (20 emails, red herrings, threads)
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List
 
 
@@ -17,10 +19,12 @@ class TaskDefinition:
 
     task_id: str
     name: str
-    difficulty: str  # easy | medium | hard
+    difficulty: str          # easy | medium | hard
+    curriculum_level: int    # 0 | 1 | 2 — for curriculum learning schedulers
     description: str
     num_emails: int
     max_steps: int
+    optimal_steps: int       # ideal number of steps (= num_emails for 1-pass)
     requires_priority: bool
     requires_routing: bool
     requires_response: bool
@@ -36,6 +40,7 @@ TASKS: Dict[str, TaskDefinition] = {
         task_id="easy",
         name="Basic Email Classification",
         difficulty="easy",
+        curriculum_level=0,
         description=(
             "You have 5 emails in your inbox. Classify each email into one of "
             "these categories: spam, billing, technical, general, urgent.\n\n"
@@ -47,6 +52,7 @@ TASKS: Dict[str, TaskDefinition] = {
         ),
         num_emails=5,
         max_steps=10,
+        optimal_steps=5,
         requires_priority=False,
         requires_routing=False,
         requires_response=False,
@@ -58,6 +64,7 @@ TASKS: Dict[str, TaskDefinition] = {
         task_id="medium",
         name="Priority & Routing",
         difficulty="medium",
+        curriculum_level=1,
         description=(
             "You have 10 emails in your inbox. For each email you must:\n\n"
             "1. CLASSIFY into a category: spam, billing, technical, general, urgent\n"
@@ -69,6 +76,7 @@ TASKS: Dict[str, TaskDefinition] = {
         ),
         num_emails=10,
         max_steps=25,
+        optimal_steps=10,
         requires_priority=True,
         requires_routing=True,
         requires_response=False,
@@ -82,6 +90,7 @@ TASKS: Dict[str, TaskDefinition] = {
         task_id="hard",
         name="SLA Triage Under Pressure",
         difficulty="hard",
+        curriculum_level=2,
         description=(
             "You have 20 emails in your inbox with limited time. For each email:\n\n"
             "1. CLASSIFY: spam, billing, technical, general, urgent\n"
@@ -99,6 +108,7 @@ TASKS: Dict[str, TaskDefinition] = {
         ),
         num_emails=20,
         max_steps=40,
+        optimal_steps=20,
         requires_priority=True,
         requires_routing=True,
         requires_response=True,
@@ -114,11 +124,7 @@ TASKS: Dict[str, TaskDefinition] = {
 
 
 def get_task(task_id: str) -> TaskDefinition:
-    """Retrieve a task definition by ID.
-
-    Raises:
-        ValueError: If task_id is not recognised.
-    """
+    """Retrieve a task definition by ID."""
     task = TASKS.get(task_id)
     if task is None:
         raise ValueError(
@@ -128,5 +134,21 @@ def get_task(task_id: str) -> TaskDefinition:
 
 
 def list_task_ids() -> List[str]:
-    """Return all registered task IDs in order of difficulty."""
-    return ["easy", "medium", "hard"]
+    """Return all task IDs in curriculum order (easiest first)."""
+    return sorted(TASKS.keys(), key=lambda tid: TASKS[tid].curriculum_level)
+
+
+def get_curriculum_order() -> List[Dict]:
+    """Return tasks in curriculum order with progression metadata."""
+    return [
+        {
+            "task_id": tid,
+            "curriculum_level": TASKS[tid].curriculum_level,
+            "name": TASKS[tid].name,
+            "difficulty": TASKS[tid].difficulty,
+            "num_emails": TASKS[tid].num_emails,
+            "max_steps": TASKS[tid].max_steps,
+            "scoring_weights": TASKS[tid].scoring_weights,
+        }
+        for tid in list_task_ids()
+    ]

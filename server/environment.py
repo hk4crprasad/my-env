@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import sys
 import os
+import time
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-# Ensure project root is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import (
@@ -29,39 +29,42 @@ from models import (
 from server.email_generator import generate_emails
 from server.tasks import TaskDefinition, get_task, list_task_ids
 from server.graders import grade_episode
-from server.reward import compute_step_reward
+from server.reward import compute_step_reward, REWARD_RUBRIC
 
 
 class EmailTriageEnvironment:
     """OpenEnv-compliant email triage environment.
 
-    The agent receives an inbox of emails and must classify, prioritize,
-    route, and optionally respond to each one. The environment scores
-    the agent's performance via deterministic graders.
+    The agent receives an inbox of emails and must classify, prioritise,
+    route, and optionally respond to each one. Rewards come from seven
+    independent rubric components, making reward hacking much harder than
+    a single scalar signal.
 
     Usage:
         >>> env = EmailTriageEnvironment()
         >>> obs = env.reset(task_id="easy")
         >>> while not obs.done:
-        ...     action = decide(obs)  # your agent logic
+        ...     action = decide(obs)
         ...     obs = env.step(action)
         >>> print(obs.metadata["grading"])
     """
 
     def __init__(self):
-        """Initialise with default (empty) state."""
         self._task: Optional[TaskDefinition] = None
         self._emails: List[EmailData] = []
         self._ground_truths: List[EmailGroundTruth] = []
         self._truth_map: Dict[str, EmailGroundTruth] = {}
+        self._valid_email_ids: set[str] = set()
 
         self._processed_ids: set[str] = set()
         self._actions_taken: List[Dict[str, Any]] = []
         self._cumulative_reward: float = 0.0
+        self._reward_breakdown: Dict[str, float] = {}  # per-rubric totals
 
         self._state = State(episode_id=str(uuid4()), step_count=0)
         self._done = False
         self._grading_result: Optional[Dict[str, Any]] = None
+        self._episode_start_time: float = 0.0
 
     # ─────────────────────────────────────────────────────────────────
     #  OpenEnv interface
@@ -74,28 +77,22 @@ class EmailTriageEnvironment:
         task_id: str = "easy",
         **kwargs: Any,
     ) -> EmailObservation:
-        """Reset the environment for a new episode.
-
-        Args:
-            seed: Random seed for reproducibility (default 42)
-            episode_id: Optional custom episode identifier
-            task_id: 'easy', 'medium', or 'hard'
-
-        Returns:
-            Initial EmailObservation with inbox contents and task description.
-        """
+        """Reset the environment for a new episode."""
         if seed is None:
             seed = 42
 
         self._task = get_task(task_id)
         self._emails, self._ground_truths = generate_emails(task_id, seed)
         self._truth_map = {gt.email_id: gt for gt in self._ground_truths}
+        self._valid_email_ids = {e.email_id for e in self._emails}
 
         self._processed_ids = set()
         self._actions_taken = []
         self._cumulative_reward = 0.0
+        self._reward_breakdown = {}
         self._done = False
         self._grading_result = None
+        self._episode_start_time = time.time()
 
         self._state = State(
             episode_id=episode_id or str(uuid4()),
@@ -113,15 +110,7 @@ class EmailTriageEnvironment:
         timeout_s: Optional[float] = None,
         **kwargs: Any,
     ) -> EmailObservation:
-        """Execute one triage action.
-
-        Args:
-            action: EmailAction (or dict with same fields)
-            timeout_s: Ignored (for interface compat)
-
-        Returns:
-            Updated EmailObservation with feedback and reward.
-        """
+        """Execute one triage action."""
         if self._done:
             return self._make_observation(
                 step_reward=0.0,
@@ -156,7 +145,7 @@ class EmailTriageEnvironment:
                 feedback=f"Unknown email_id: '{email_id}'. Check the inbox.",
             )
 
-        # ── Compute reward ────────────────────────────────────────────
+        # ── Compute reward (7 independent components) ─────────────────
         step_reward, feedback = compute_step_reward(
             action_dict,
             gt,
@@ -164,6 +153,7 @@ class EmailTriageEnvironment:
             requires_routing=self._task.requires_routing,
             requires_response=self._task.requires_response,
             already_processed=already_processed,
+            valid_email_ids=self._valid_email_ids,
         )
 
         self._cumulative_reward += step_reward
@@ -185,17 +175,22 @@ class EmailTriageEnvironment:
                 self._ground_truths,
                 self._state.step_count,
             )
-            feedback += f" | Episode complete! Final score: {self._grading_result['final_score']}"
+            elapsed = round(time.time() - self._episode_start_time, 2)
+            self._grading_result["elapsed_s"] = elapsed
+            feedback += f" | Episode complete! Final score: {self._grading_result['final_score']:.4f}"
 
         return self._make_observation(step_reward=step_reward, feedback=feedback)
 
     @property
     def state(self) -> State:
-        """Return current environment state."""
         return self._state
 
+    @property
+    def rubric(self) -> Dict[str, Any]:
+        """Return rubric definitions for all reward components."""
+        return REWARD_RUBRIC
+
     def close(self) -> None:
-        """Clean up resources (no-op for this environment)."""
         pass
 
     # ─────────────────────────────────────────────────────────────────
@@ -203,13 +198,11 @@ class EmailTriageEnvironment:
     # ─────────────────────────────────────────────────────────────────
 
     def _unprocessed_emails(self) -> List[EmailData]:
-        """Return emails not yet acted on."""
         return [e for e in self._emails if e.email_id not in self._processed_ids]
 
     def _make_observation(
         self, step_reward: float = 0.0, feedback: Optional[str] = None
     ) -> EmailObservation:
-        """Build an observation from current state."""
         unprocessed = self._unprocessed_emails()
         stats = InboxStats(
             total=len(self._emails),
