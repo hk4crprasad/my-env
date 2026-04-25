@@ -13,12 +13,12 @@ pinned: false
 **OpenEnv Hackathon 2026 — Team Ctrl-Alt-Defeat**  
 Haraprasad Hota · Subhendu Samal · Ashutosh Panigrahi
 
-[![Open in Spaces](https://huggingface.co/datasets/huggingface/badges/resolve/main/open-in-hf-spaces-sm-dark.svg)](https://huggingface.co/spaces/your-org/email-triage-env)
-[![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/your-org/email-triage-env/blob/main/notebooks/train_grpo.ipynb)
+[![Open in Spaces](https://huggingface.co/datasets/huggingface/badges/resolve/main/open-in-hf-spaces-sm-dark.svg)](https://huggingface.co/spaces/Hk4crprasad/email-triage-env)
+[![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Hk4crprasad/email-triage-env/blob/main/notebooks/train_grpo.ipynb)
 
-> **Mini-blog**: https://huggingface.co/blog/your-org/email-triage-rl  
+> **Mini-blog**: https://huggingface.co/blog/Hk4crprasad/email-triage-rl  
 > **Demo video** (< 2 min): https://youtube.com/your-video  
-> **Trained adapter**: https://huggingface.co/your-org/email-triage-grpo
+> **Trained adapter**: https://huggingface.co/Hk4crprasad/email-triage-grpo
 
 ---
 
