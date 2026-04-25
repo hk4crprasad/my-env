@@ -19,6 +19,16 @@ from typing import Any, Dict, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Python 3.14 compat: click.Choice lacks __class_getitem__; typer 0.24.x tries to
+# use it as a generic base class. Adding the classmethod makes it subscriptable
+# without affecting runtime behaviour (the subscript is only used for type hints).
+try:
+    import click as _click
+    if not hasattr(_click.Choice, "__class_getitem__"):
+        _click.Choice.__class_getitem__ = classmethod(lambda cls, x: cls)
+except Exception:
+    pass
+
 import gradio as gr
 
 from server.environment import EmailTriageEnvironment

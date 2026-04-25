@@ -727,22 +727,42 @@ def main():
 
         if args.use_local_model:
             try:
-                from transformers import AutoModelForCausalLM, AutoTokenizer
+                from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
                 from peft import PeftModel
                 import torch
+
+                # Auto-enable 4-bit on GPUs with <6 GB VRAM (e.g. RTX 3050 4 GB)
+                use_4bit = False
+                if torch.cuda.is_available():
+                    vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+                    use_4bit = vram_gb < 6.0
+                    print(f"  GPU VRAM: {vram_gb:.1f} GB → 4-bit={'ON' if use_4bit else 'OFF'}")
+
+                bnb_config = None
+                if use_4bit:
+                    bnb_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.float16,
+                        bnb_4bit_use_double_quant=True,
+                    )
+                    print("  🔧 4-bit NF4 quantisation enabled")
+
                 print(f"  Loading base: {args.base_model}")
                 tok = AutoTokenizer.from_pretrained(args.base_model, token=api_key)
                 if tok.pad_token is None:
                     tok.pad_token = tok.eos_token
                 base = AutoModelForCausalLM.from_pretrained(
                     args.base_model,
-                    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                    quantization_config=bnb_config,
+                    torch_dtype=torch.float16 if (torch.cuda.is_available() and not use_4bit) else None,
                     device_map="auto", token=api_key,
                 )
                 print(f"  Loading adapter: {args.adapter_id}")
                 model_obj = PeftModel.from_pretrained(base, args.adapter_id, token=api_key)
                 model_obj.eval()
-                print(f"  ✅ Loaded. Device: {next(model_obj.parameters()).device}")
+                vram_used = torch.cuda.memory_allocated(0) / 1e9 if torch.cuda.is_available() else 0
+                print(f"  ✅ Loaded. Device: {next(model_obj.parameters()).device} | VRAM: {vram_used:.1f} GB")
                 trained_results = run_llm_eval(
                     label=f"Trained ({args.adapter_id})",
                     seed=args.seed,

@@ -82,6 +82,9 @@ BASE_MODEL_ID = os.getenv("BASE_MODEL_ID", "Qwen/Qwen2.5-3B-Instruct")
 ADAPTER_MODEL_ID = os.getenv("ADAPTER_MODEL_ID", "Hk4crprasad/email-triage-grpo")
 # Set USE_LOCAL_MODEL=1 to load the adapter locally instead of hitting an API
 USE_LOCAL_MODEL = os.getenv("USE_LOCAL_MODEL", "0") == "1"
+# 4-bit quantisation — auto-enabled on GPUs with <6 GB VRAM to fit Qwen2.5-3B.
+# Override with LOAD_IN_4BIT=0 to disable (requires >=6 GB VRAM).
+_LOAD_IN_4BIT_ENV = os.getenv("LOAD_IN_4BIT", "auto")
 
 BENCHMARK = "email_triage"
 MAX_STEPS_PER_TASK = {"easy": 10, "medium": 25, "hard": 40}
@@ -244,17 +247,46 @@ def load_local_adapter():
 
     Adapter: Hk4crprasad/email-triage-grpo  (43 MB safetensors)
     Base:    Qwen/Qwen2.5-3B-Instruct
+
+    4-bit quantisation (BitsAndBytes) is auto-enabled when VRAM < 6 GB
+    so the 3B model fits in 4 GB cards (e.g. RTX 3050 Laptop).
+    Override: LOAD_IN_4BIT=0  to force float16 (needs >=6 GB VRAM)
+              LOAD_IN_4BIT=1  to force 4-bit regardless
     """
     try:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
         from peft import PeftModel
         import torch
     except ImportError:
         raise ImportError(
-            "Local adapter mode requires: pip install transformers peft accelerate"
+            "Local adapter mode requires: pip install transformers peft accelerate bitsandbytes"
         )
 
     hf_token = API_KEY or None
+
+    # ── Decide quantisation ───────────────────────────────────────────────
+    use_4bit = False
+    if _LOAD_IN_4BIT_ENV == "1":
+        use_4bit = True
+    elif _LOAD_IN_4BIT_ENV == "0":
+        use_4bit = False
+    else:
+        # auto: enable 4-bit when GPU VRAM < 6 GB
+        if torch.cuda.is_available():
+            vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+            use_4bit = vram_gb < 6.0
+            print(f"ℹ  GPU VRAM: {vram_gb:.1f} GB → 4-bit={'ON' if use_4bit else 'OFF'}", flush=True)
+
+    bnb_config = None
+    if use_4bit:
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+        print("🔧 Using 4-bit NF4 quantisation (BitsAndBytes)", flush=True)
+
     print(f"🔄 Loading base model: {BASE_MODEL_ID}", flush=True)
     tokenizer = AutoTokenizer.from_pretrained(
         BASE_MODEL_ID,
@@ -266,7 +298,8 @@ def load_local_adapter():
 
     base = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL_ID,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        quantization_config=bnb_config,
+        torch_dtype=torch.float16 if (torch.cuda.is_available() and not use_4bit) else None,
         device_map="auto",
         token=hf_token,
         trust_remote_code=True,
@@ -279,7 +312,11 @@ def load_local_adapter():
         token=hf_token,
     )
     model.eval()
-    print(f"✅ Adapter loaded and merged. Device: {next(model.parameters()).device}", flush=True)
+    mem = ""
+    if torch.cuda.is_available():
+        used = torch.cuda.memory_allocated(0) / 1e9
+        mem = f" | VRAM used: {used:.1f} GB"
+    print(f"✅ Adapter loaded. Device: {next(model.parameters()).device}{mem}", flush=True)
     return model, tokenizer
 
 
