@@ -81,8 +81,8 @@ def main():
     # ─────────────────────────────────────────────────────────────────────
     section("Reward rubric")
     expected = {"classification", "priority", "routing", "response_quality",
-                 "escalation", "format_compliance", "anti_reprocessing"}
-    check("7 independent reward components",
+                 "escalation", "format_compliance", "anti_reprocessing", "inbox_completion"}
+    check("8 independent reward components",
            lambda: set(REWARD_RUBRIC.keys()) == expected)
     check("all components marked independent",
            lambda: all(r["independent"] for r in REWARD_RUBRIC.values()))

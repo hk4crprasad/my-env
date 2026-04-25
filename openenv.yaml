@@ -50,7 +50,7 @@ tasks:
     description: Full triage with response drafts (20 emails, 5 dimensions)
     curriculum_level: 2
 
-reward_components: 7
+reward_components: 8
 anti_reward_hacking: true
 curriculum_learning: true
 trained_adapter: Hk4crprasad/email-triage-grpo
