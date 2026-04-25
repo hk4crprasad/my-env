@@ -31,8 +31,23 @@ from server.tasks import TaskDefinition, get_task, list_task_ids
 from server.graders import grade_episode
 from server.reward import compute_step_reward, REWARD_RUBRIC
 
+# OpenEnv base class — fall back to a no-op base if not available.
+try:
+    from openenv.env import Env as _OpenEnvBase
+    _HAS_OPENENV_BASE = True
+except ImportError:
+    class _OpenEnvBase:
+        """Fallback base when openenv is not installed."""
+        def __init__(self, name="Env", state_space=None, action_space=None,
+                     episode_max_length=300):
+            self.name = name
+            self.state_space = state_space
+            self.action_space = action_space
+            self.episode_max_length = episode_max_length
+    _HAS_OPENENV_BASE = False
 
-class EmailTriageEnvironment:
+
+class EmailTriageEnvironment(_OpenEnvBase):
     """OpenEnv-compliant email triage environment.
 
     The agent receives an inbox of emails and must classify, prioritise,
@@ -50,6 +65,13 @@ class EmailTriageEnvironment:
     """
 
     def __init__(self):
+        super().__init__(
+            name="email_triage",
+            state_space=None,
+            action_space=None,
+            episode_max_length=40,  # hardest task uses 40 steps
+        )
+
         self._task: Optional[TaskDefinition] = None
         self._emails: List[EmailData] = []
         self._ground_truths: List[EmailGroundTruth] = []
@@ -140,6 +162,23 @@ class EmailTriageEnvironment:
         gt = self._truth_map.get(email_id)
         if gt is None:
             self._state.step_count += 1
+            self._cumulative_reward += -0.1
+
+            # Still check for step-budget termination on bad actions
+            if self._state.step_count >= self._task.max_steps:
+                self._done = True
+                self._grading_result = grade_episode(
+                    self._task,
+                    self._actions_taken,
+                    self._ground_truths,
+                    self._state.step_count,
+                )
+                self._grading_result["elapsed_s"] = round(time.time() - self._episode_start_time, 2)
+                return self._make_observation(
+                    step_reward=-0.1,
+                    feedback=f"Unknown email_id: '{email_id}'. | Episode complete (out of steps). "
+                              f"Final score: {self._grading_result['final_score']:.4f}",
+                )
             return self._make_observation(
                 step_reward=-0.1,
                 feedback=f"Unknown email_id: '{email_id}'. Check the inbox.",

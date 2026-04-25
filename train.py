@@ -34,8 +34,8 @@ from typing import Any, Dict, List, Optional
 
 def parse_args():
     p = argparse.ArgumentParser(description="GRPO training for Email Triage")
-    p.add_argument("--model", default="Qwen/Qwen2.5-1.5B-Instruct",
-                   help="Base model to fine-tune (default: Qwen2.5-1.5B-Instruct)")
+    p.add_argument("--model", default="Qwen/Qwen3.5-2B",
+                   help="Base model to fine-tune (default: Qwen/Qwen3.5-2B)")
     p.add_argument("--task", default="curriculum",
                    choices=["easy", "medium", "hard", "curriculum"],
                    help="Task to train on. 'curriculum' trains easy→medium→hard.")
