@@ -1,0 +1,8 @@
+# W&B eval suite — install these before running judge_eval.py
+wandb>=0.18
+openai>=1.0
+# optional — only needed with --use-local-model
+# transformers>=4.40
+# peft>=0.10
+# accelerate>=0.30
+# torch>=2.0

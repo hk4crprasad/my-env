@@ -272,6 +272,16 @@ python scripts/generate_plots.py
 
 Generates the 4 PNGs in `plots/` (verifier spread, training curve, score comparison, dimension breakdown).
 
+### Run the W&B judge evaluation suite
+
+```bash
+pip install wandb openai
+export HF_TOKEN="hf_..."
+python wandb_eval/judge_eval.py --mode full
+```
+
+Logs environment validation, reward component separation, baseline LLM scores, and trained adapter scores to a W&B run. See [`wandb_eval/README.md`](wandb_eval/README.md) for full options.
+
 ---
 
 ## API Reference
@@ -325,6 +335,9 @@ notebooks/
 scripts/
   validate_env.py    — 26-check end-to-end sanity test
   generate_plots.py  — Generate the README plots from real data
+wandb_eval/
+  judge_eval.py      — W&B evaluation suite (env validation + reward analysis + LLM scoring)
+  README.md          — Judge quick-start guide
 plots/
   reward_spread.png       — Verifier separation chart (real)
   training_curve.png      — GRPO loss + reward curve
