@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "email-triage-env"
-version = "1.0.0"
+version = "2.0.0"
 description = "OpenEnv environment for email triage — classify, prioritise, route, and respond to emails"
 readme = "README.md"
 license = {text = "MIT"}

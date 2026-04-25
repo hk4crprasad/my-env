@@ -1,0 +1,17 @@
+# ── Training dependencies (GRPO with TRL + Unsloth) ──────────────────
+# Install on top of requirements.txt for local training:
+#   pip install -r requirements.txt -r requirements-train.txt
+#
+# Or in Colab: just run the first cell of notebooks/train_grpo.ipynb
+
+trl>=0.12.0
+datasets>=2.18.0
+transformers>=4.40.0
+accelerate>=0.28.0
+peft>=0.10.0
+bitsandbytes>=0.43.0
+torch>=2.2.0
+wandb>=0.17.0
+
+# Optional: Unsloth for 2x faster training (install separately)
+# pip install unsloth
