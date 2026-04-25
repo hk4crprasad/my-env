@@ -6,11 +6,29 @@ description: >
   classify, prioritise, route, and draft responses. Three difficulty levels
   support curriculum learning. Seven independent reward components prevent
   reward hacking. Theme: World Modeling — Personalized Tasks (#3.2).
+
+  Powered by openenv-core — compatible with TRL, Unsloth, ART, and Oumi
+  GRPO trainers via WebSocket protocol.
+
 type: space
 runtime: fastapi
 app: server.app:app
 port: 7860
 version: "2.0.0"
+
+# openenv-core client/action/observation bindings
+client:
+  class_name: EmailTriageClient
+  module: client
+
+action:
+  class_name: EmailAction
+  module: models
+
+observation:
+  class_name: EmailObservation
+  module: models
+
 tags:
   - email
   - triage
@@ -18,6 +36,9 @@ tags:
   - rl
   - curriculum
   - personalized-tasks
+  - openenv-core
+  - grpo
+
 tasks:
   - id: easy
     description: Basic email classification (5 emails, 1 dimension)
@@ -28,3 +49,8 @@ tasks:
   - id: hard
     description: Full triage with response drafts (20 emails, 5 dimensions)
     curriculum_level: 2
+
+reward_components: 7
+anti_reward_hacking: true
+curriculum_learning: true
+trained_adapter: Hk4crprasad/email-triage-grpo

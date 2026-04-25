@@ -1,18 +1,35 @@
 """
 FastAPI application for the Email Triage Environment.
 
-OpenEnv-compliant endpoints:
+OpenEnv-core endpoints (WebSocket, Meta-standard):
+  WS   /ws/reset   — start a new episode (WebSocket)
+  WS   /ws/step    — execute an agent action (WebSocket)
+  WS   /ws/state   — retrieve episode state (WebSocket)
+  GET  /web        — interactive browser UI (ENABLE_WEB_INTERFACE=true)
+
+REST endpoints (backwards-compatible, hackathon validator):
   POST /reset      — start a new episode
   POST /step       — execute an agent action
   GET  /state      — retrieve current environment state
   GET  /health     — health check
   GET  /schema     — action/observation JSON schemas
   GET  /tasks      — list available tasks
-  GET  /rubric     — reward rubric definitions (all independent components)
+  GET  /rubric     — reward rubric definitions (7 independent components)
   GET  /curriculum — task progression for curriculum learning
+  GET  /leaderboard — top sessions by score
+  GET  /analytics  — per-task aggregated statistics
 
-Usage:
+Usage (local):
     uvicorn server.app:app --host 0.0.0.0 --port 7860
+
+Usage with openenv-core client:
+    from client import EmailTriageClient
+    async with EmailTriageClient(base_url='http://localhost:7860') as env:
+        result = await env.reset(task_id='easy')
+        result = await env.step(action)
+
+Usage with TRL GRPOTrainer:
+    See notebooks/train_grpo.ipynb — uses openenv-core GenericEnvClient
 """
 
 from __future__ import annotations
@@ -36,6 +53,12 @@ from server.tasks import list_task_ids, get_curriculum_order, TASKS
 from server.graders import get_rubric_definitions
 from server.reward import REWARD_RUBRIC
 from server.database import db
+
+# ── openenv-core integration (WebSocket + web UI) ─────────────────────────
+# Lazy import — only activated at runtime, not at module load time.
+# This prevents Python 3.14 gradio/typer issues in local dev.
+_HAS_OPENENV_CORE = False
+_openenv_app = None
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Request / Response models
@@ -86,20 +109,73 @@ app = FastAPI(
         "emails: classify, prioritise, route, and respond. "
         "Seven independent reward components prevent reward hacking. "
         "Three difficulty levels enable curriculum learning.\n\n"
-        "Theme: World Modeling — Personalized Tasks (#3.2)"
+        "Theme: World Modeling — Personalized Tasks (#3.2)\n\n"
+        "Powered by [openenv-core](https://github.com/meta-pytorch/OpenEnv) — "
+        "compatible with TRL, Unsloth, ART, and Oumi GRPO trainers via WebSocket."
     ),
     version="2.0.0",
 )
+
+# ── Mount openenv-core WebSocket app at /ws ────────────────────────────────
+# Trainers using openenv-core EnvClient connect here over WebSocket.
+# Example: EmailTriageClient(base_url="http://localhost:7860")
+if _HAS_OPENENV_CORE:
+    try:
+        _openenv_app = create_fastapi_app(
+            env=EmailTriageEnvironment,
+            action_cls=EmailAction,
+            observation_cls=EmailObservation,
+            max_concurrent_envs=20,
+        )
+        app.mount("/ws", _openenv_app)
+    except Exception:
+        pass  # non-fatal — REST endpoints still work
 
 
 @app.on_event("startup")
 async def startup() -> None:
     await db.connect()
+    # ── Try to activate openenv-core WebSocket protocol ──────────────────
+    global _HAS_OPENENV_CORE, _openenv_app
+    try:
+        from openenv.core import create_fastapi_app
+        _openenv_app = create_fastapi_app(
+            env=EmailTriageEnvironment,
+            action_cls=EmailAction,
+            observation_cls=EmailObservation,
+            max_concurrent_envs=20,
+        )
+        app.mount("/ws", _openenv_app)
+        _HAS_OPENENV_CORE = True
+        print("✅ openenv-core WebSocket protocol activated at /ws")
+    except Exception as e:
+        print(f"ℹ openenv-core WebSocket not available ({type(e).__name__}) — REST API only")
 
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
     await db.close()
+
+
+# ── Web interface endpoint ─────────────────────────────────────────────────
+# Enable with: ENABLE_WEB_INTERFACE=true uvicorn server.app:app ...
+# Then open: http://localhost:7860/web
+@app.get("/web")
+async def web_interface_info():
+    """Browser-based interactive environment explorer."""
+    if not _HAS_OPENENV_CORE:
+        return {
+            "status": "unavailable",
+            "reason": "openenv-core not installed",
+            "install": "pip install openenv-core>=0.2.0",
+        }
+    if os.environ.get("ENABLE_WEB_INTERFACE", "").lower() != "true":
+        return {
+            "status": "disabled",
+            "enable": "Set ENABLE_WEB_INTERFACE=true and restart the server",
+            "description": "Two-pane UI: send actions on left, see observations on right",
+        }
+    return {"status": "enabled", "url": "/ws/web"}
 
 app.add_middleware(
     CORSMiddleware,

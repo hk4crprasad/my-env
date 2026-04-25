@@ -19,7 +19,10 @@ try:
     from openenv.core.env_server.types import State as _BaseState
 
     HAS_OPENENV = True
-except ImportError:
+except Exception:
+    # Catches ImportError AND TypeError from openenv-core/gradio/typer
+    # version conflicts (e.g. Python 3.14 local dev). Fallback stubs below
+    # are fully OpenEnv-spec compatible — Docker (Python 3.11) works fine.
     HAS_OPENENV = False
 
     class _BaseAction(BaseModel):
