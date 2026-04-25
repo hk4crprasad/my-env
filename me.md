@@ -108,11 +108,11 @@ async with EmailTriageClient(base_url="http://localhost:7860") as env:
 **7 independent reward components** — each verifiable in isolation:
 
 ```
-reward_classification()   → +0.30 correct category | -0.10 wrong
-reward_priority()         → +0.20 exact | +0.10 off-by-1 | 0 off-by-2+
-reward_routing()          → +0.20 correct department | -0.05 wrong
-reward_response_quality() → +0.15 if required & good draft | -0.10 if required & missing
-reward_escalation()       → +0.10 if correctly escalated | -0.05 wrong
+reward_classification()   → +0.20 correct category | -0.10 wrong
+reward_priority()         → +0.15 exact | +0.07 off-by-1 | 0 off-by-2+
+reward_routing()          → +0.15 correct department | -0.08 wrong
+reward_response_quality() → +0.30 ≥60% keywords | +0.15 ≥30% | -0.10 if required & missing
+reward_escalation()       → +0.05 if correctly escalated | -0.10 wrong
 reward_format_compliance()→ +0.05 valid email_id | -0.15 invalid (applied first)
 reward_deduplication()    → -0.15 if email already processed (anti-loop)
 ```
@@ -197,11 +197,11 @@ server/app.py validates EmailAction with Pydantic
 server/environment.py calls compute_step_reward(action, ground_truth)
   → reward_format_compliance()   # -0.15 if invalid → stop here
   → reward_deduplication()       # -0.15 if already processed → stop here
-  → reward_classification()      # +0.30 / -0.10
-  → reward_priority()            # +0.20 / +0.10 / 0.00
-  → reward_routing()             # +0.20 / -0.05
-  → reward_response_quality()    # +0.15 / -0.10 / 0.00
-  → reward_escalation()          # +0.10 / -0.05
+  → reward_classification()      # +0.20 / -0.10
+  → reward_priority()            # +0.15 / +0.07 / 0.00
+  → reward_routing()             # +0.15 / -0.08
+  → reward_response_quality()    # +0.30 / +0.15 / -0.10
+  → reward_escalation()          # +0.05 / -0.10
   total step_reward = sum of above
         ↓
 EmailObservation returned: {step_reward, cumulative_reward, action_feedback, emails: [...remaining]}

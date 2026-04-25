@@ -78,11 +78,11 @@ We use **7 independent reward components**, each a pure verifiable function:
 |-----------|-----|-----|-----------------|
 | Format compliance | +0.05 | **-0.15** | Valid JSON structure, valid `email_id` |
 | Deduplication | 0 | **-0.15** | Never re-process the same email |
-| Classification | +0.30 | -0.10 | Correct spam/billing/technical/urgent/general |
-| Priority | +0.20 | 0.00 | Exact: +0.20 · Off-by-1: +0.10 · Off-by-2+: 0 |
-| Routing | +0.20 | -0.05 | Correct department assignment |
-| Response quality | +0.15 | -0.10 | Hidden keyword coverage in draft |
-| Escalation | +0.10 | -0.05 | Correctly flags high-severity issues |
+| Classification | +0.20 | -0.10 | Correct spam/billing/technical/urgent/general |
+| Priority | +0.15 | 0.00 | Exact: +0.15 · Off-by-1: +0.07 · Off-by-2+: 0 |
+| Routing | +0.15 | -0.05 | Correct department assignment |
+| Response quality | +0.30 | -0.10 | Hidden keyword coverage in draft |
+| Escalation | +0.05 | -0.05 | Correctly flags high-severity issues |
 
 **Why this stops reward hacking:**
 
@@ -176,8 +176,8 @@ Body: We detected 3 failed login attempts on your admin account from
 | Decision | Baseline (0-shot) | After GRPO |
 |----------|:----------------:|:-----------:|
 | Category | `urgent` ❌ (it's spam/phishing) | `spam` ✅ |
-| Priority | 1 ❌ (not urgent) | 4 ✅ |
-| Department | `engineering` ❌ | `security` ✅ |
+| Priority | 1 ❌ (not urgent) | 5 ✅ |
+| Department | `engineering` ❌ | `support` ✅ |
 | Escalate | `true` ❌ | `false` ✅ |
 | Step reward | -0.20 | +0.55 |
 

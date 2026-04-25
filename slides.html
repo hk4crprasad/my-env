@@ -75,9 +75,10 @@
   .score-row{display:flex;gap:24px;justify-content:center;flex-wrap:wrap}
   .score-block{text-align:center;padding:24px 32px;background:#1e293b;border:1px solid #334155;border-radius:16px}
   .score-block .before{font-size:18px;color:#f87171;font-weight:700}
-  .score-block .arrow{font-size:22px;color:#475569;margin:4px 0}
+  .score-block .arrow{font-size:18px;color:#6366f1;margin:0 6px;vertical-align:middle}
+  .score-block .score-row-inner{display:flex;align-items:center;justify-content:center;gap:4px;margin:4px 0}
   .score-block .after{font-size:32px;color:#34d399;font-weight:800}
-  .score-block .delta{font-size:13px;color:#818cf8;margin-top:4px}
+  .score-block .delta{display:inline-block;background:#14532d;color:#4ade80;font-size:13px;font-weight:700;padding:2px 10px;border-radius:20px;margin-top:6px}
   .score-block .task{font-size:12px;color:#475569;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
   /* keyframe */
   @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
@@ -90,7 +91,7 @@
 <body>
 
 <div class="progress" id="prog"></div>
-<div class="slide-num" id="snum">1 / 7</div>
+<div class="slide-num" id="snum">1 / 8</div>
 <button class="nav-btn" id="prev" onclick="go(-1)">‹</button>
 <button class="nav-btn" id="next" onclick="go(1)">›</button>
 
@@ -145,11 +146,11 @@
   <div style="width:100%;max-width:740px">
     <div class="rbar"><div class="rbar-label">📋 Format Compliance</div><div class="rbar-track"><div class="rbar-fill" style="width:17%"></div></div><div class="rbar-val">±0.15</div></div>
     <div class="rbar"><div class="rbar-label">🔄 Deduplication</div><div class="rbar-track"><div class="rbar-fill" style="width:17%"></div></div><div class="rbar-val">−0.15</div></div>
-    <div class="rbar"><div class="rbar-label">🏷️ Classification</div><div class="rbar-track"><div class="rbar-fill" style="width:100%"></div></div><div class="rbar-val">+0.30</div></div>
-    <div class="rbar"><div class="rbar-label">⚡ Priority</div><div class="rbar-track"><div class="rbar-fill" style="width:67%"></div></div><div class="rbar-val">+0.20</div></div>
-    <div class="rbar"><div class="rbar-label">🏢 Routing</div><div class="rbar-track"><div class="rbar-fill" style="width:67%"></div></div><div class="rbar-val">+0.20</div></div>
-    <div class="rbar"><div class="rbar-label">✍️ Response Quality</div><div class="rbar-track"><div class="rbar-fill" style="width:50%"></div></div><div class="rbar-val">+0.15</div></div>
-    <div class="rbar"><div class="rbar-label">🚨 Escalation</div><div class="rbar-track"><div class="rbar-fill" style="width:33%"></div></div><div class="rbar-val">+0.10</div></div>
+    <div class="rbar"><div class="rbar-label">✍️ Response Quality</div><div class="rbar-track"><div class="rbar-fill" style="width:100%"></div></div><div class="rbar-val">+0.30</div></div>
+    <div class="rbar"><div class="rbar-label">🏷️ Classification</div><div class="rbar-track"><div class="rbar-fill" style="width:67%"></div></div><div class="rbar-val">+0.20</div></div>
+    <div class="rbar"><div class="rbar-label">⚡ Priority</div><div class="rbar-track"><div class="rbar-fill" style="width:50%"></div></div><div class="rbar-val">+0.15</div></div>
+    <div class="rbar"><div class="rbar-label">🏢 Routing</div><div class="rbar-track"><div class="rbar-fill" style="width:50%"></div></div><div class="rbar-val">+0.15</div></div>
+    <div class="rbar"><div class="rbar-label">🚨 Escalation</div><div class="rbar-track"><div class="rbar-fill" style="width:17%"></div></div><div class="rbar-val">+0.05</div></div>
   </div>
   <div class="grid g3" style="max-width:740px;margin-top:20px">
     <div class="card" style="font-size:13px;color:#94a3b8"><strong style="color:#818cf8">Format gate first</strong> — bad JSON gets −0.15, nothing else runs</div>
@@ -202,24 +203,30 @@
   <div class="score-row">
     <div class="score-block">
       <div class="task">Easy Task</div>
-      <div class="before">0.60</div>
-      <div class="arrow">↓</div>
-      <div class="after">0.92</div>
-      <div class="delta">+0.32 improvement</div>
+      <div class="score-row-inner">
+        <span class="before">0.60</span>
+        <span class="arrow">→</span>
+        <span class="after">0.92</span>
+      </div>
+      <div class="delta">+0.32 ↑</div>
     </div>
     <div class="score-block" style="border-color:#6366f1;background:linear-gradient(135deg,#1e1b4b,#1e293b)">
       <div class="task">Medium Task</div>
-      <div class="before">0.38</div>
-      <div class="arrow">↓</div>
-      <div class="after">0.64</div>
-      <div class="delta">+0.26 improvement</div>
+      <div class="score-row-inner">
+        <span class="before">0.38</span>
+        <span class="arrow">→</span>
+        <span class="after">0.64</span>
+      </div>
+      <div class="delta">+0.26 ↑</div>
     </div>
     <div class="score-block">
       <div class="task">Hard Task</div>
-      <div class="before">0.29</div>
-      <div class="arrow">↓</div>
-      <div class="after">0.51</div>
-      <div class="delta">+0.22 improvement</div>
+      <div class="score-row-inner">
+        <span class="before">0.29</span>
+        <span class="arrow">→</span>
+        <span class="after">0.51</span>
+      </div>
+      <div class="delta">+0.22 ↑</div>
     </div>
   </div>
   <div class="grid g3" style="max-width:700px;margin-top:20px">
@@ -254,8 +261,8 @@
       <h3 style="color:#34d399;margin-bottom:12px">✅ After GRPO</h3>
       <table style="font-size:13px">
         <tr><td>Category</td><td class="good">spam</td></tr>
-        <tr><td>Priority</td><td class="good">4</td></tr>
-        <tr><td>Department</td><td class="good">security</td></tr>
+        <tr><td>Priority</td><td class="good">5</td></tr>
+        <tr><td>Department</td><td class="good">support</td></tr>
         <tr><td>Escalate</td><td class="good">false</td></tr>
         <tr><td style="border:none">Step reward</td><td class="good" style="border:none">+0.55</td></tr>
       </table>
@@ -293,6 +300,75 @@
     </p>
   </div>
   <p style="margin-top:16px;font-size:13px;color:#475569">Haraprasad Hota · Subhendu Samal · Ashutosh Panigrahi</p>
+</div>
+
+<!-- SLIDE 8: ARCHITECTURE & TRAINING LOOP -->
+<div class="slide" id="s7">
+  <div class="tag">Full Pipeline</div>
+  <h2>How GRPO Training Works</h2>
+  <p class="sub" style="margin-bottom:24px">Environment handles world dynamics · GRPO handles optimisation · Model just learns to act</p>
+  <div class="grid g2" style="max-width:960px;align-items:start">
+    <div>
+      <div class="timeline">
+        <div class="tl-item">
+          <div class="tl-dot">📧</div>
+          <div class="tl-line"></div>
+          <div class="tl-content">
+            <h4>Deterministic Email Corpus</h4>
+            <p>Seed-based generation — same seed → identical inbox → reproducible scores</p>
+          </div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-dot">🔁</div>
+          <div class="tl-line"></div>
+          <div class="tl-content">
+            <h4>Model Generates 4 Completions per Prompt</h4>
+            <p>GRPO samples N=4 actions per email. More diversity → better gradient signal.</p>
+          </div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-dot">⚖️</div>
+          <div class="tl-line"></div>
+          <div class="tl-content">
+            <h4>7 Independent Verifiers Score Each</h4>
+            <p>No learned reward model needed — pure deterministic functions. Each fires independently.</p>
+          </div>
+        </div>
+        <div class="tl-item">
+          <div class="tl-dot">📈</div>
+          <div class="tl-content">
+            <h4>GRPO Shifts Probability Mass</h4>
+            <p>Higher-reward completions become more likely. No value model — advantage estimated from group.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card accent">
+        <h3>Training Stack</h3>
+        <ul style="color:#94a3b8;font-size:13px;line-height:2.2;list-style:none;margin-top:8px">
+          <li>🤗 <strong style="color:#e2e8f0">TRL GRPOTrainer</strong> — RL algorithm</li>
+          <li>⚡ <strong style="color:#e2e8f0">Unsloth</strong> — 4-bit QLoRA, 2× faster</li>
+          <li>🌐 <strong style="color:#e2e8f0">OpenEnv</strong> — environment interface</li>
+          <li>🧠 <strong style="color:#e2e8f0">Qwen2.5-3B-Instruct</strong> — base model</li>
+          <li>💾 <strong style="color:#e2e8f0">LoRA r=16</strong> — 43 MB adapter</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Curriculum Advancement</h3>
+        <p style="color:#94a3b8;font-size:13px;line-height:1.7;margin-top:8px">
+          easy (1 dim) <span style="color:#6366f1">──&gt; avg &gt; 0.60 ──&gt;</span> medium (3 dims)<br>
+          medium <span style="color:#6366f1">──&gt; avg &gt; 0.50 ──&gt;</span> hard (5 dims)<br><br>
+          Cold-start on <em>hard</em> → near-zero reward → training stalls.
+          Curriculum bootstraps the policy.
+        </p>
+      </div>
+      <div class="card" style="background:linear-gradient(135deg,#14532d22,#1e293b);border-color:#4ade8055">
+        <h3 style="color:#4ade80">Result After 300 Steps</h3>
+        <p style="color:#94a3b8;font-size:13px;margin-top:8px">easy: 0.60 → <strong style="color:#4ade80">0.92</strong> &nbsp;|&nbsp; medium: 0.38 → <strong style="color:#4ade80">0.64</strong> &nbsp;|&nbsp; hard: 0.29 → <strong style="color:#4ade80">0.51</strong></p>
+      </div>
+    </div>
+  </div>
 </div>
 
 </div><!-- /deck -->
