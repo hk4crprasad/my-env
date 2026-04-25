@@ -107,7 +107,7 @@ reward = +0.55
 
 **Slide 5:**
 
-> "Before training: Qwen2.5-3B-Instruct scores 0.60 on easy tasks, 0.29 on hard. After 300 GRPO steps on our environment — on a T4 Colab, free tier — easy improves to 0.92, hard to 0.51."
+> "Before training: Qwen2.5-3B-Instruct scores 0.60 on easy tasks, 0.29 on hard. After 300 GRPO steps on our environment — on a T4 Colab, free tier — easy improves to 0.80, hard to 0.59."
 
 **Slide 6 (the phishing before/after):**
 
@@ -278,4 +278,4 @@ Curriculum endpoint: https://hk4crprasad-email-triage-env.hf.space/curriculum
 
 ## One-Line Pitch (memorise this)
 
-> **"We built the only hackathon environment where reward hacking is structurally impossible — 7 independent verifiers, 3-level curriculum, trained adapter that improves from 0.29 to 0.51 on hard tasks, live on Hugging Face right now."**
+> **"We built the only hackathon environment where reward hacking is structurally impossible — 7 independent verifiers, 3-level curriculum, trained adapter that improves from 0.29 to 0.59 on hard tasks (+0.30), live on Hugging Face right now."**

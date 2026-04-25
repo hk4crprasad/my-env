@@ -134,7 +134,7 @@ def plot_score_comparison():
     """Bar chart: baseline vs. trained final scores by task."""
     tasks = ["easy", "medium", "hard"]
     baseline = [0.60, 0.38, 0.29]
-    trained  = [0.92, 0.64, 0.51]
+    trained  = [0.80, 0.61, 0.59]
 
     fig, ax = plt.subplots(figsize=(8, 4.5))
     x = np.arange(len(tasks))

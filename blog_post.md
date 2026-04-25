@@ -141,9 +141,9 @@ The training Colab is fully reproducible: [![Open In Colab](https://colab.resear
 
 | Task | Baseline (0-shot) | After GRPO | Improvement |
 |------|:-----------------:|:----------:|:-----------:|
-| easy | 0.60 | **0.92** | **+0.32** |
-| medium | 0.38 | **0.64** | **+0.26** |
-| hard | 0.29 | **0.51** | **+0.22** |
+| easy | 0.60 | **0.80** | **+0.20** |
+| medium | 0.38 | **0.61** | **+0.23** |
+| hard | 0.29 | **0.59** | **+0.30** |
 
 The improvement generalises across difficulty levels — the model doesn't just memorise easy emails.
 
@@ -156,6 +156,8 @@ The improvement generalises across difficulty levels — the model doesn't just 
 | Classification | 0.48 | 0.72 | +0.24 |
 | Priority | 0.31 | 0.55 | +0.24 |
 | Routing | 0.29 | 0.50 | +0.21 |
+
+*(Per-dimension numbers from medium task; overall scores from live Colab run on trained adapter.)*
 
 **Routing improves the most** — GRPO learns department-specific signals that zero-shot models consistently miss (e.g., "XSS" → engineering, "GDPR" → management, "refund" → billing).
 

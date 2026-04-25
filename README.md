@@ -27,7 +27,7 @@ Haraprasad Hota · Subhendu Samal · Ashutosh Panigrahi
 ---
 
 > **Zero-shot Qwen2.5-3B routes billing disputes to Engineering 60% of the time.**  
-> **After 300 GRPO steps on our environment: 50% correct routing on hard tasks, 92% on easy.**  
+> **After 300 GRPO steps on our environment: 59% on hard tasks (+0.30), 80% on easy (+0.20).**  
 > **We built what made that possible — an OpenEnv RL environment with 7 independent reward verifiers and 3-level curriculum learning.**
 
 ---
@@ -178,9 +178,9 @@ Before any training, we ran the deterministic verifiers on **perfect actions vs.
 
 | Task | Baseline (0-shot) | After GRPO | Δ |
 |------|-------------------|------------|---|
-| easy | 0.60 | **0.92** | +0.32 |
-| medium | 0.38 | **0.64** | +0.26 |
-| hard | 0.29 | **0.51** | +0.22 |
+| easy | 0.60 | **0.80** | +0.20 |
+| medium | 0.38 | **0.61** | +0.23 |
+| hard | 0.29 | **0.59** | +0.30 |
 
 ### 4. Per-Dimension Improvement (medium task)
 
