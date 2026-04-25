@@ -1,28 +1,49 @@
 """
-Inference Script — Email Triage Environment
-=============================================
+inference.py — Email Triage RL Environment
+============================================
+OpenEnv Hackathon 2026 · Team Ctrl-Alt-Defeat
 
-MANDATORY:
-- Before submitting, ensure the following variables are defined in your
-  environment configuration:
-    API_BASE_URL   The API endpoint for the LLM.
-    MODEL_NAME     The model identifier to use for inference.
-    HF_TOKEN       Your Hugging Face / API key.
+PURPOSE
+-------
+Runs an LLM agent against all 3 triage tasks (easy / medium / hard) and
+prints structured output in the exact format the hackathon validator expects:
 
-- The inference script must be named `inference.py` and placed in the root
-  directory of the project.
-- Participants must use OpenAI Client for all LLM calls using above variables.
+    [START] task=easy env=email_triage model=<model>
+    [STEP]  step=1 action={...} reward=0.35 done=false error=null
+    [END]   success=true steps=5 score=0.9200 rewards=0.35,0.20,...
 
-This script runs a baseline LLM agent against all 3 tasks (easy, medium, hard)
-and prints reproducible scores.
+HOW TO RUN
+----------
+Mode 1 — API (default, uses HF Inference Router or any OpenAI-compatible API):
 
-Two inference modes:
-  1. API mode (default) — uses OpenAI-compatible API (HF Inference Router, etc.)
-  2. Local adapter mode  — loads the trained LoRA adapter from HF directly.
-     Set USE_LOCAL_MODEL=1 in your environment to activate.
-     Requires: pip install transformers peft accelerate
+    export HF_TOKEN="hf_..."
+    export MODEL_NAME="openai/gpt-oss-120b"   # default — free on HF router
+    python inference.py
 
-Trained adapter: https://huggingface.co/Hk4crprasad/email-triage-grpo
+Mode 2 — Trained adapter (our GRPO fine-tuned model, no API needed):
+
+    pip install transformers peft accelerate
+    export HF_TOKEN="hf_..."
+    export USE_LOCAL_MODEL=1
+    python inference.py
+
+    This loads Hk4crprasad/email-triage-grpo (43 MB LoRA adapter) on top of
+    Qwen/Qwen2.5-3B-Instruct and runs it locally.
+
+ENVIRONMENT VARIABLES
+---------------------
+  HF_TOKEN         Your Hugging Face token (also accepted as API_KEY)
+  API_BASE_URL     LLM API endpoint (default: https://router.huggingface.co/v1)
+  MODEL_NAME       Model identifier (default: openai/gpt-oss-120b)
+  USE_LOCAL_MODEL  Set to 1 to use the trained LoRA adapter (default: 0)
+  ADAPTER_MODEL_ID Adapter to load (default: Hk4crprasad/email-triage-grpo)
+  BASE_MODEL_ID    Base model for adapter (default: Qwen/Qwen2.5-3B-Instruct)
+
+LINKS
+-----
+  Environment (HF Space): https://huggingface.co/spaces/Hk4crprasad/email-triage-env
+  Trained adapter:        https://huggingface.co/Hk4crprasad/email-triage-grpo
+  Source code (GitHub):   https://github.com/hk4crprasad/my-env
 """
 
 import json

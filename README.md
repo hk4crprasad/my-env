@@ -14,7 +14,8 @@ pinned: false
 Haraprasad Hota · Subhendu Samal · Ashutosh Panigrahi
 
 [![Open in Spaces](https://huggingface.co/datasets/huggingface/badges/resolve/main/open-in-hf-spaces-sm-dark.svg)](https://huggingface.co/spaces/Hk4crprasad/email-triage-env)
-[![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Hk4crprasad/email-triage-env/blob/main/notebooks/train_grpo.ipynb)
+[![Colab — Train](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Hk4crprasad/email-triage-env/blob/main/notebooks/train_grpo.ipynb)
+[![Colab — Demo & Test](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Hk4crprasad/email-triage-env/blob/main/notebooks/demo_and_test.ipynb)
 
 > **Trained adapter**: https://huggingface.co/Hk4crprasad/email-triage-grpo  
 > **HF Space (live)**: https://huggingface.co/spaces/Hk4crprasad/email-triage-env  
