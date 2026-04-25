@@ -10,5 +10,20 @@ gradio>=4.0.0
 matplotlib>=3.8.0
 websockets>=12.0             # required by openenv-core EnvClient
 
+# ── Local adapter inference + judge eval (optional, non-Docker) ───────
+# For local GPU runs of inference.py with USE_LOCAL_MODEL=1 and
+# wandb_eval/judge_eval.py --use-local-model
+transformers>=4.44.0
+peft>=0.12.0
+accelerate>=0.33.0
+bitsandbytes>=0.43.0
+wandb>=0.18.0
+
+# Note:
+# - torch is NOT listed here because the right CUDA wheel depends on your GPU.
+#   Install it separately, or use the provided Colab notebook which handles
+#   this automatically: notebooks/demo_and_test.ipynb
+# - If you only run the server/API (Docker / HF Space), torch is not required.
+
 # ── Training deps (install separately for GRPO training) ──────────────
 # pip install -r requirements-train.txt

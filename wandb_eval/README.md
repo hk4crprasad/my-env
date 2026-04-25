@@ -38,13 +38,13 @@ pip install wandb openai
 python wandb_eval/judge_eval.py --mode full
 ```
 
-### Option C — Full comparison with local trained adapter (needs GPU, ~15 min)
+### Option C — Full comparison with trained adapter (run in Colab — recommended)
 
-```bash
-export HF_TOKEN="hf_..."
-pip install wandb openai transformers peft accelerate
-python wandb_eval/judge_eval.py --mode full --use-local-model
-```
+Open the notebook directly:
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Hk4crprasad/email-triage-env/blob/main/notebooks/demo_and_test.ipynb)
+
+The Colab notebook installs all dependencies (including CUDA torch), loads the trained adapter from HF Hub, runs all 3 tasks, and prints the before/after score table.
 
 ### Option D — Use your own LLM endpoint
 
