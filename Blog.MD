@@ -22,6 +22,8 @@ tags:
 
 # Training an LLM Email Triage Agent with GRPO: Reinforcement Learning from Verifiable Rewards
 
+![Baseline vs GRPO — Qwen3.5-2B score comparison across easy / medium / hard tasks](https://huggingface.co/spaces/Hk4crprasad/email-triage-env/resolve/main/plots/score_comparison.png)
+
 > **📧 Live environment**: [huggingface.co/spaces/Hk4crprasad/email-triage-env](https://huggingface.co/spaces/Hk4crprasad/email-triage-env)  
 > **🎮 Interactive demo**: [`/demo`](https://hk4crprasad-email-triage-env.hf.space/demo) — see baseline vs trained side-by-side in your browser  
 > **🧠 Trained adapter**: [Hk4crprasad/email-triage-grpo](https://huggingface.co/Hk4crprasad/email-triage-grpo)  
