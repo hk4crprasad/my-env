@@ -157,10 +157,18 @@ async def startup() -> None:
             import gradio as gr  # noqa: F401
             from demo import build_ui
             blocks = build_ui()
+            # CRITICAL: must call .queue() before mounting into FastAPI.
+            # Without this, Gradio accepts jobs but workers never start
+            # → queue/join returns 200 but function is never executed.
+            blocks.queue(
+                max_size=10,          # allow up to 10 queued requests
+                default_concurrency_limit=1,  # one model inference at a time (VRAM)
+            )
             gr.mount_gradio_app(app, blocks, path="/demo")
-            print("✅ Gradio demo mounted at /demo")
+            print("✅ Gradio demo mounted at /demo (queue enabled)")
         except Exception as e:
             print(f"ℹ Gradio demo not mounted ({type(e).__name__}: {e})")
+
 
 
 @app.on_event("shutdown")
