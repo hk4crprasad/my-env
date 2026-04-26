@@ -156,9 +156,21 @@ def build_dataset(task_ids: List[str], seed: int = 42) -> List[Dict[str, Any]]:
 #  Independent reward functions (passed to GRPOTrainer)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _parse_action(completion: str) -> Optional[Dict[str, Any]]:
-    """Parse LLM completion into an action dict."""
+def _parse_action(completion) -> Optional[Dict[str, Any]]:
+    """Parse LLM completion into an action dict.
+
+    TRL may pass completions as:
+      - str  (most common, e.g. vLLM backend)
+      - List[str]  (token list — join before parsing)
+      - List[int]  (token ids — shouldn't happen but guard anyway)
+    """
+    # Normalise to str
+    if isinstance(completion, list):
+        completion = " ".join(str(t) for t in completion)
+    if not isinstance(completion, str):
+        completion = str(completion)
     text = completion.strip()
+
     # Strip markdown fences
     if "```" in text:
         lines = [l for l in text.split("\n") if not l.strip().startswith("```")]
