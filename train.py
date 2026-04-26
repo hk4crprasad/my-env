@@ -278,6 +278,21 @@ def _decode_completion(comp) -> str:
     return str(comp)
 
 
+def _apply_chat_template(tokenizer, msgs, device=None):
+    """Qwen3.5-2B uses Qwen3_5Processor (multimodal).
+
+    Calling apply_chat_template(..., tokenize=True) on it triggers vision
+    processing which crashes on plain text messages.  Always get the prompt
+    string first, then tokenize separately.
+    """
+    import torch
+    text = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+    ids  = tokenizer(text, return_tensors="pt", add_special_tokens=False)["input_ids"]
+    if device is not None:
+        ids = ids.to(device)
+    return ids
+
+
 
 def reward_format(completions: List[str], prompts=None, **kwargs) -> List[float]:
     """Graduated format reward — ensures reward_std > 0 so GRPO has a gradient.
@@ -627,21 +642,18 @@ def evaluate_model(model, tokenizer, task_ids: List[str], seed: int = 99) -> Dic
             email = obs_dict["emails"][0]
             prompt_text = format_email_prompt(email, obs_dict.get("task_description", ""))
 
-            inputs = tokenizer.apply_chat_template(
-                [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt_text},
-                ],
-                tokenize=True,
-                add_generation_prompt=True,
-                return_tensors="pt",
+            inputs = _apply_chat_template(
+                tokenizer,
+                [{"role": "system", "content": SYSTEM_PROMPT},
+                 {"role": "user",   "content": prompt_text}],
+                device=model.device,
             )
 
             try:
                 import torch
                 with torch.no_grad():
                     outputs = model.generate(
-                        inputs.to(model.device),
+                        inputs,
                         max_new_tokens=256,
                         temperature=0.0,
                         do_sample=False,
@@ -697,15 +709,16 @@ def evaluate_model_live(
                         break
                     email = emails[0] if isinstance(emails[0], dict) else emails[0].model_dump()
                     prompt_text = format_email_prompt(email, getattr(obs, "task_description", ""))
-                    inputs = tokenizer.apply_chat_template(
+                    inputs = _apply_chat_template(
+                        tokenizer,
                         [{"role": "system", "content": SYSTEM_PROMPT},
-                         {"role": "user", "content": prompt_text}],
-                        tokenize=True, add_generation_prompt=True, return_tensors="pt",
+                         {"role": "user",   "content": prompt_text}],
+                        device=model.device,
                     )
                     import torch
                     with torch.no_grad():
                         out = model.generate(
-                            inputs.to(model.device),
+                            inputs,
                             max_new_tokens=320, temperature=0.0, do_sample=False,
                         )
                     response = tokenizer.decode(out[0][inputs.shape[-1]:], skip_special_tokens=True)

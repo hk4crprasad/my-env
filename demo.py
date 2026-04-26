@@ -254,9 +254,10 @@ def _generate(model, tokenizer, msgs: list, use_adapter: bool) -> str:
         if hasattr(model, "disable_adapter_layers"):
             model.disable_adapter_layers()
 
-    inputs = tokenizer.apply_chat_template(
-        msgs, tokenize=True, add_generation_prompt=True, return_tensors="pt",
-    ).to(next(model.parameters()).device)
+    # Qwen3.5-2B uses Qwen3_5Processor — must tokenize=False first, then tokenize separately
+    _dev   = next(model.parameters()).device
+    _text  = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(_text, return_tensors="pt", add_special_tokens=False)["input_ids"].to(_dev)
     with torch.no_grad():
         out = model.generate(
             inputs,
