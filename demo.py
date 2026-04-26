@@ -173,25 +173,24 @@ def _load_adapter_lazy() -> Tuple[Any, Any, str]:
                 "(this Space must be on the GPU tier)."
             )
 
-        info_lines = [f"Loading {BASE_MODEL_ID} …"]
-        tok = AutoTokenizer.from_pretrained(BASE_MODEL_ID, token=HF_TOKEN, trust_remote_code=True)
-        if tok.pad_token is None:
-            tok.pad_token = tok.eos_token
-
-        # ── Dispatch by compute capability AND VRAM ─────────────────────
-        # T4 (HF Spaces "T4 small/medium") = Turing, cc 7.5 — supports FP16
-        # but NOT BF16. Ampere+ (cc 8.0+) supports BF16 and full-precision LoRA.
         props   = torch.cuda.get_device_properties(0)
         vram_gb = props.total_memory / 1e9
         cc_major, cc_minor = props.major, props.minor
-        supports_bf16 = cc_major >= 8
+        print(f"🔍 GPU detected: {props.name} (cc={cc_major}.{cc_minor}, VRAM={vram_gb:.1f} GB)")
 
-        # 4-bit NF4 fits any T4-class GPU comfortably (~4 GB) and is the
-        # safe default for HF Spaces small-tier; full-precision only when
-        # we have BF16 + plenty of VRAM.
+        info_lines = [f"Loading {BASE_MODEL_ID} …"]
+        print(f"📥 Downloading tokenizer: {BASE_MODEL_ID} ...")
+        tok = AutoTokenizer.from_pretrained(BASE_MODEL_ID, token=HF_TOKEN, trust_remote_code=True)
+        if tok.pad_token is None:
+            tok.pad_token = tok.eos_token
+        print(f"✅ Tokenizer loaded")
+
+        # ── Dispatch by compute capability AND VRAM ─────────────────────
+        supports_bf16 = cc_major >= 8
         use_4bit = (not supports_bf16) or (vram_gb < 12)
 
         if use_4bit:
+            print(f"📥 Downloading base model in 4-bit NF4: {BASE_MODEL_ID} ...")
             bnb = BitsAndBytesConfig(
                 load_in_4bit             = True,
                 bnb_4bit_quant_type      = "nf4",
@@ -206,6 +205,7 @@ def _load_adapter_lazy() -> Tuple[Any, Any, str]:
                 f"GPU: {props.name} cc={cc_major}.{cc_minor} VRAM={vram_gb:.1f} GB → 4-bit NF4"
             )
         else:
+            print(f"📥 Downloading base model in bfloat16: {BASE_MODEL_ID} ...")
             base = AutoModelForCausalLM.from_pretrained(
                 BASE_MODEL_ID, torch_dtype=torch.bfloat16, device_map="auto",
                 token=HF_TOKEN, trust_remote_code=True,
@@ -213,10 +213,13 @@ def _load_adapter_lazy() -> Tuple[Any, Any, str]:
             info_lines.append(
                 f"GPU: {props.name} cc={cc_major}.{cc_minor} VRAM={vram_gb:.1f} GB → bfloat16"
             )
+        print(f"✅ Base model loaded")
 
+        print(f"📥 Downloading LoRA adapter: {ADAPTER_MODEL_ID} ...")
         info_lines.append(f"Loading LoRA adapter {ADAPTER_MODEL_ID} …")
         model = PeftModel.from_pretrained(base, ADAPTER_MODEL_ID, token=HF_TOKEN)
         model.eval()
+        print(f"✅ Adapter merged · device={next(model.parameters()).device}")
         info_lines.append(f"✅ Loaded · device={next(model.parameters()).device}")
 
         info = " | ".join(info_lines)
@@ -308,8 +311,10 @@ def run_compare(task_id: str, seed: int, email_index: int) -> Tuple[str, str, st
     email_md = format_email(email)
 
     try:
+        print(f"🚀 run_compare called: task={task_id}, seed={seed}, idx={email_index}")
         model, tokenizer, info = _load_adapter_lazy()
     except gr.Error as e:
+        print(f"❌ Model loading failed: {e}")
         return email_md, "", "", "", f"⚠ {e}"
 
     msgs, _ = _build_inference_prompt(email, od.get("task_description", ""))
