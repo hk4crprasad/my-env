@@ -38,7 +38,7 @@ Haraprasad Hota · Subhendu Samal · Ashutosh Panigrahi
 | **Validation suite** (26 checks, CPU only) | `python scripts/validate_env.py` | 60 s |
 | **Full re-run** — training + eval + plots | [train_grpo.ipynb](notebooks/train_grpo.ipynb) on free Colab T4 | ~45 min |
 
-> **📝 Blog**: [Blog.MD](Blog.MD)  
+> **📝 Blog**: [Blog.md](Blog.md)  
 > **🎯 Themes**: Multi-Agent Interactions (#1) + World Modeling — Personalized Tasks (#3.2)
 
 ---
@@ -483,7 +483,7 @@ It runs on a free Colab T4. The architecture scales — the environment, reward 
 
 | Resource | Link |
 |----------|------|
-| 📝 Blog (full write-up) | [Blog.MD](Blog.MD) |
+| 📝 Blog (full write-up) | [Blog.md](Blog.md) |
 | 🧠 Trained LoRA adapter | [Hk4crprasad/email-triage-grpo](https://huggingface.co/Hk4crprasad/email-triage-grpo) |
 | 🎮 Live Gradio demo | [/demo](https://hk4crprasad-email-triage-env.hf.space/demo) |
 | 📊 Reward rubric (live JSON) | [/rubric](https://hk4crprasad-email-triage-env.hf.space/rubric) |
