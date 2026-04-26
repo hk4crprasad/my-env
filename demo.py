@@ -254,10 +254,13 @@ def _generate(model, tokenizer, msgs: list, use_adapter: bool) -> str:
         if hasattr(model, "disable_adapter_layers"):
             model.disable_adapter_layers()
 
-    # Qwen3.5-2B uses Qwen3_5Processor — must tokenize=False first, then tokenize separately
-    _dev   = next(model.parameters()).device
-    _text  = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-    inputs = tokenizer(_text, return_tensors="pt", add_special_tokens=False)["input_ids"].to(_dev)
+    # Qwen3.5-2B: Qwen3_5Processor wraps a text tokenizer + vision processor.
+    # Both apply_chat_template(tokenize=True) AND processor(text) trigger image loading.
+    # Fix: get the prompt string, then call the underlying text tokenizer directly.
+    _dev     = next(model.parameters()).device
+    _text    = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+    _text_tok = getattr(tokenizer, "tokenizer", tokenizer)
+    inputs   = _text_tok(_text, return_tensors="pt", add_special_tokens=False)["input_ids"].to(_dev)
     with torch.no_grad():
         out = model.generate(
             inputs,
@@ -266,7 +269,8 @@ def _generate(model, tokenizer, msgs: list, use_adapter: bool) -> str:
             temperature      = None,
             pad_token_id     = tokenizer.pad_token_id or tokenizer.eos_token_id,
         )
-    text = tokenizer.decode(out[0][inputs.shape[-1]:], skip_special_tokens=True)
+    _dec_tok = getattr(tokenizer, "tokenizer", tokenizer)
+    text = _dec_tok.decode(out[0][inputs.shape[-1]:], skip_special_tokens=True)
     if use_adapter and hasattr(model, "enable_adapter_layers"):
         model.enable_adapter_layers()  # leave model in adapter-on state by default
     return text.strip()

@@ -278,19 +278,35 @@ def _decode_completion(comp) -> str:
     return str(comp)
 
 
-def _apply_chat_template(tokenizer, msgs, device=None):
-    """Qwen3.5-2B uses Qwen3_5Processor (multimodal).
+def _get_text_tokenizer(tokenizer):
+    """Return the plain text tokenizer even if `tokenizer` is a multimodal Processor.
 
-    Calling apply_chat_template(..., tokenize=True) on it triggers vision
-    processing which crashes on plain text messages.  Always get the prompt
-    string first, then tokenize separately.
+    Qwen3.5-2B ships as Qwen3_5Processor which wraps a PreTrainedTokenizer.
+    Calling processor(text, ...) or processor.encode(text) goes through the
+    vision processing path and tries to load_image() on the text string.
+    Use the `.tokenizer` attribute to get the raw text tokenizer.
+    """
+    return getattr(tokenizer, "tokenizer", tokenizer)
+
+
+def _apply_chat_template(tokenizer, msgs, device=None):
+    """Safe chat-template application for multimodal processors (Qwen3.5-2B etc).
+
+    Two-step: get prompt string via apply_chat_template, then encode with the
+    underlying text tokenizer (not the multimodal processor).
     """
     import torch
-    text = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-    ids  = tokenizer(text, return_tensors="pt", add_special_tokens=False)["input_ids"]
+    text     = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+    text_tok = _get_text_tokenizer(tokenizer)
+    ids      = text_tok(text, return_tensors="pt", add_special_tokens=False)["input_ids"]
     if device is not None:
         ids = ids.to(device)
     return ids
+
+
+def _decode(tokenizer, token_ids, skip_special_tokens=True) -> str:
+    """Safe decode that works whether tokenizer is a Processor or plain Tokenizer."""
+    return _get_text_tokenizer(tokenizer).decode(token_ids, skip_special_tokens=skip_special_tokens)
 
 
 
@@ -658,7 +674,7 @@ def evaluate_model(model, tokenizer, task_ids: List[str], seed: int = 99) -> Dic
                         temperature=0.0,
                         do_sample=False,
                     )
-                response = tokenizer.decode(outputs[0][inputs.shape[-1]:], skip_special_tokens=True)
+                response = _decode(tokenizer, outputs[0][inputs.shape[-1]:])
                 action = _parse_action(response)
             except Exception:
                 action = None
@@ -721,7 +737,7 @@ def evaluate_model_live(
                             inputs,
                             max_new_tokens=320, temperature=0.0, do_sample=False,
                         )
-                    response = tokenizer.decode(out[0][inputs.shape[-1]:], skip_special_tokens=True)
+                    response = _decode(tokenizer, out[0][inputs.shape[-1]:])
                     action = _parse_action(response) or {
                         "email_id": email["email_id"], "category": "general",
                         "priority": 3, "department": "support",
