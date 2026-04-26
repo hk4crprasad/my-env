@@ -47,7 +47,7 @@ from server.reward import REWARD_RUBRIC
 
 
 # Trained adapter on HF Hub (LoRA over Qwen2.5-3B-Instruct, ~43 MB)
-BASE_MODEL_ID    = os.environ.get("BASE_MODEL_ID",    "Qwen/Qwen2.5-3B-Instruct")
+BASE_MODEL_ID    = os.environ.get("BASE_MODEL_ID",    "meta-llama/Llama-3.2-1B-Instruct")
 ADAPTER_MODEL_ID = os.environ.get("ADAPTER_MODEL_ID", "Hk4crprasad/email-triage-grpo")
 HF_TOKEN         = os.environ.get("HF_TOKEN") or os.environ.get("API_KEY")
 
@@ -417,6 +417,176 @@ def run_compare(task_id: str, seed: int, email_index: int):
 #  Build UI
 # ─────────────────────────────────────────────────────────────────────────
 
+def run_multi_agent(task_id: str, seed: int, email_index: int):
+    """Generator: run 3-agent cooperative triage, stream updates to UI."""
+    print(f"🤝 run_multi_agent START: task={task_id} seed={seed} idx={email_index}", flush=True)
+    yield "", "", "", "", "", "⏳ **Step 1/4** — Loading email and initialising agents…"
+
+    try:
+        seed = int(seed); email_index = int(email_index)
+        env = EmailTriageEnvironment()
+        obs = env.reset(task_id=task_id, seed=seed)
+        od  = obs.model_dump()
+    except Exception as e:
+        yield f"❌ env error: {e}", "", "", "", "", "❌ Environment error"
+        return
+
+    emails = od.get("emails", [])
+    if email_index < 0 or email_index >= len(emails):
+        yield f"Index {email_index} out of range", "", "", "", "", "❌ Index error"
+        return
+
+    email    = emails[email_index]
+    email_md = format_email(email)
+    yield email_md, "", "", "", "", "⏳ **Step 2/4** — Loading model for all 3 agents…"
+
+    # Load model (same lazy load, uses the adapter if available)
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            yield email_md, "", "", "", "", "❌ No GPU detected"
+            return
+        model, tokenizer, info = _load_adapter_lazy()
+    except Exception as e:
+        yield email_md, "", "", "", "", f"❌ Model load failed: {e}"
+        return
+
+    from server.multi_agent_env import (
+        ANALYST_SYSTEM_PROMPT, ROUTER_SYSTEM_PROMPT, RESPONDER_SYSTEM_PROMPT,
+        build_analyst_prompt, build_router_prompt, build_responder_prompt,
+    )
+    from server.reward import (
+        reward_coordination, reward_theory_of_mind, reward_coalition,
+    )
+
+    task_desc = od.get("task_description", "")
+
+    # ── Agent 1: Analyst ─────────────────────────────────────────────────
+    yield email_md, "*(running…)*", "", "", "", "⏳ **Step 3/4** — Analyst agent reading email…"
+    analyst_msgs = [
+        {"role": "system", "content": ANALYST_SYSTEM_PROMPT},
+        {"role": "user",   "content": build_analyst_prompt(email, task_desc)},
+    ]
+    analyst_raw  = _generate(model, tokenizer, analyst_msgs, use_adapter=True)
+    analyst_json = _to_action_safe(analyst_raw)
+
+    analyst_cat  = (analyst_json or {}).get("category", "general")
+    analyst_pri  = int((analyst_json or {}).get("priority", 3))
+    analyst_sigs = (analyst_json or {}).get("signals", [])
+
+    analyst_md = (
+        f"**Output:**\n```json\n{_pretty(analyst_json or analyst_raw)}\n```\n\n"
+        f"**Category**: `{analyst_cat}`  **Priority**: `{analyst_pri}`  \n"
+        f"**Signals**: {analyst_sigs}"
+    )
+    yield email_md, analyst_md, "*(running…)*", "", "", "⏳ **Step 3/4** — Router agent using Analyst output…"
+
+    # ── Agent 2: Router (sees Analyst output) ────────────────────────────
+    analyst_ctx = {"category": analyst_cat, "priority": analyst_pri, "signals": analyst_sigs, "confidence": 1.0}
+    router_msgs = [
+        {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+        {"role": "user",   "content": build_router_prompt(email, task_desc, analyst_ctx)},
+    ]
+    router_raw  = _generate(model, tokenizer, router_msgs, use_adapter=True)
+    router_json = _to_action_safe(router_raw)
+
+    router_dept   = (router_json or {}).get("department", "support")
+    router_esc    = bool((router_json or {}).get("escalate", False))
+    router_reason = (router_json or {}).get("routing_reason", "")
+    router_agree  = bool((router_json or {}).get("analyst_agreement", True))
+
+    router_md = (
+        f"**Output:**\n```json\n{_pretty(router_json or router_raw)}\n```\n\n"
+        f"**Department**: `{router_dept}`  **Escalate**: `{router_esc}`  \n"
+        f"**Agrees with Analyst**: `{router_agree}`  \n"
+        f"**Reason**: {router_reason}"
+    )
+    yield email_md, analyst_md, router_md, "*(running…)*", "", "⏳ **Step 4/4** — Responder agent drafting response…"
+
+    # ── Agent 3: Responder (sees Analyst + Router output) ────────────────
+    router_ctx  = {"department": router_dept, "escalate": router_esc, "routing_reason": router_reason}
+    resp_msgs = [
+        {"role": "system", "content": RESPONDER_SYSTEM_PROMPT},
+        {"role": "user",   "content": build_responder_prompt(email, task_desc, analyst_ctx, router_ctx)},
+    ]
+    resp_raw  = _generate(model, tokenizer, resp_msgs, use_adapter=True)
+    resp_json = _to_action_safe(resp_raw)
+
+    resp_draft = (resp_json or {}).get("response_draft", "")
+    resp_tone  = (resp_json or {}).get("tone", "")
+
+    responder_md = (
+        f"**Output:**\n```json\n{_pretty(resp_json or resp_raw)}\n```\n\n"
+        f"**Tone**: `{resp_tone}`  \n"
+        f"**Draft**: {resp_draft or '*(none)*'}"
+    )
+
+    # ── Coordination scoring ──────────────────────────────────────────────
+    r_coord = reward_coordination(analyst_cat, router_dept, router_esc)
+    r_tom   = reward_theory_of_mind(analyst_sigs, router_reason, analyst_cat)
+    r_coal  = reward_coalition(resp_draft, analyst_cat, router_dept, requires_response=bool(resp_draft))
+
+    # Individual rewards (approximate via single-agent env step)
+    single_env = EmailTriageEnvironment()
+    single_env.reset(task_id=task_id, seed=seed)
+    # advance to the email at email_index
+    for e in emails[:email_index]:
+        single_env.step({"email_id": e["email_id"], "category": "general",
+                         "priority": 3, "department": "support", "escalate": False})
+    combined_action = {
+        "email_id": email["email_id"],
+        "category": analyst_cat, "priority": analyst_pri,
+        "department": router_dept, "escalate": router_esc,
+        "response_draft": resp_draft,
+    }
+    single_obs = single_env.step(combined_action)
+    individual_reward = single_obs.model_dump().get("step_reward", 0.0)
+    total_reward = individual_reward + r_coord + r_tom + r_coal
+
+    rewards_md = (
+        f"### Individual Rewards\n"
+        f"- Single-agent combined: **`{individual_reward:+.3f}`**\n\n"
+        f"### Coordination Rewards (Multi-Agent Bonus)\n"
+        f"- 🤝 Consistency (analyst↔router): **`{r_coord:+.3f}`**\n"
+        f"- 🧠 Theory-of-Mind (router used analyst): **`{r_tom:+.3f}`**\n"
+        f"- 🏛 Coalition (responder coherent): **`{r_coal:+.3f}`**\n\n"
+        f"### **Total Reward: `{total_reward:+.3f}`**\n\n"
+        f"*Multi-agent bonus = `{r_coord+r_tom+r_coal:+.3f}` on top of `{individual_reward:+.3f}` individual*"
+    )
+    yield email_md, analyst_md, router_md, responder_md, rewards_md, f"✅ Done · {info}"
+
+
+def _to_action_safe(text: str) -> Optional[Dict[str, Any]]:
+    """Parse JSON from model output, return None on failure."""
+    text = text.strip()
+    if "```" in text:
+        text = "\n".join(l for l in text.split("\n") if not l.strip().startswith("```")).strip()
+    try:
+        a = json.loads(text)
+        if isinstance(a, dict):
+            return a
+    except Exception:
+        pass
+    for i, ch in enumerate(text):
+        if ch == "{":
+            for j in range(len(text)-1, i, -1):
+                if text[j] == "}":
+                    try:
+                        a = json.loads(text[i:j+1])
+                        if isinstance(a, dict):
+                            return a
+                    except Exception:
+                        pass
+                    break
+    return None
+
+
+def _pretty(obj) -> str:
+    if isinstance(obj, dict):
+        return json.dumps(obj, indent=2)
+    return str(obj)[:300]
+
+
 def _gpu_status_md() -> str:
     """Compute GPU status string once at UI build time."""
     try:
@@ -547,6 +717,51 @@ def build_ui() -> gr.Blocks:
                     inputs=[cmp_task, cmp_seed, cmp_idx],
                     outputs=[cmp_email, cmp_base, cmp_train, cmp_truth, info_md],
                     concurrency_limit=1,  # one GPU inference at a time (Gradio 5/6)
+                )
+
+            # ──────────────────────────────────────────────────────────────
+            #  Tab 3 — Multi-Agent Triage (Theme #1: Multi-Agent Interactions)
+            # ──────────────────────────────────────────────────────────────
+            with gr.Tab("🤝 Multi-Agent Triage"):
+                gr.Markdown(
+                    "### 3-Agent Cooperative Email Triage\n"
+                    "**Theme #1: Multi-Agent Interactions** — Three specialist agents collaborate:\n\n"
+                    "1. **🔍 Analyst** — reads email, classifies category/priority, extracts signals\n"
+                    "2. **🗺 Router** — sees email + Analyst output, decides department + escalation "
+                    "*(theory-of-mind: must model Analyst's reasoning)*\n"
+                    "3. **✍ Responder** — sees email + both agents, drafts reply "
+                    "*(coalition: must be consistent with both upstream agents)*\n\n"
+                    "Rewards: **Individual accuracy** + **Coordination bonus** + **Theory-of-Mind** + **Coalition score**"
+                )
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        ma_task = gr.Dropdown(list_task_ids(), value="hard", label="Task")
+                        ma_seed = gr.Number(value=42, label="Seed", precision=0)
+                        ma_idx  = gr.Number(value=0, label="Email index", precision=0)
+                        ma_btn  = gr.Button("🤝 Run 3-Agent Team", variant="primary")
+                        ma_info = gr.Markdown("*(click to run all 3 agents)*")
+                    with gr.Column(scale=2):
+                        ma_email = gr.Markdown("*(email will load here)*")
+                with gr.Row():
+                    with gr.Column():
+                        gr.Markdown("#### 🔍 Analyst Agent")
+                        ma_analyst = gr.Markdown("*(analyst output)*")
+                    with gr.Column():
+                        gr.Markdown("#### 🗺 Router Agent")
+                        ma_router = gr.Markdown("*(router output)*")
+                with gr.Row():
+                    with gr.Column():
+                        gr.Markdown("#### ✍ Responder Agent")
+                        ma_responder = gr.Markdown("*(responder output)*")
+                    with gr.Column():
+                        gr.Markdown("#### 🏆 Team Rewards")
+                        ma_rewards = gr.Markdown("*(rewards will appear here)*")
+
+                ma_btn.click(
+                    fn=run_multi_agent,
+                    inputs=[ma_task, ma_seed, ma_idx],
+                    outputs=[ma_email, ma_analyst, ma_router, ma_responder, ma_rewards, ma_info],
+                    concurrency_limit=1,
                 )
 
     return demo

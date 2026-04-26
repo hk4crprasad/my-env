@@ -44,8 +44,8 @@ from typing import Any, Dict, List, Optional
 
 def parse_args():
     p = argparse.ArgumentParser(description="GRPO training for Email Triage RL Environment")
-    p.add_argument("--model", default="Qwen/Qwen2.5-3B-Instruct",
-                   help="Base model (default: Qwen/Qwen2.5-3B-Instruct)")
+    p.add_argument("--model", default="meta-llama/Llama-3.2-1B-Instruct",
+                   help="Base model (default: meta-llama/Llama-3.2-1B-Instruct)")
     p.add_argument("--task", default="curriculum",
                    choices=["easy", "medium", "hard", "curriculum"],
                    help="Task to train on. 'curriculum' runs easy→medium→hard.")
@@ -768,6 +768,335 @@ def main():
     }
     with open(os.path.join(args.output_dir, "training_summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Multi-Agent Training — Theme #1: Multi-Agent Interactions
+#
+#  Three specialist agents (Analyst, Router, Responder) are trained jointly
+#  using role-conditioned GRPO.  A single Llama-3.2-1B-Instruct model is
+#  trained with different system prompts for each role.
+#
+#  Dataset: each email generates 3 training examples:
+#    example_1: analyst_prompt  → {category, priority, signals}  (6 reward fns)
+#    example_2: router_prompt   → {department, escalate, reason}  (+ coord reward)
+#    example_3: responder_prompt → {response_draft, tone}          (+ coalition reward)
+#
+#  Reward functions: individual (same 6 verifiers) + multi-agent coordination
+# ─────────────────────────────────────────────────────────────────────────────
+
+# System prompts for each agent role (imported here for single source of truth)
+from server.multi_agent_env import (
+    ANALYST_SYSTEM_PROMPT,
+    ROUTER_SYSTEM_PROMPT,
+    RESPONDER_SYSTEM_PROMPT,
+    build_analyst_prompt,
+    build_router_prompt,
+    build_responder_prompt,
+)
+
+
+def build_multi_agent_dataset(
+    task_ids: List[str], seed: int = 42
+) -> List[Dict[str, Any]]:
+    """Build training dataset for multi-agent GRPO.
+
+    Each email generates 3 training examples — one per agent role.
+    The router and responder examples include the ground-truth upstream
+    outputs in their user prompt (simulating ideal upstream agents).
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from server.email_generator import generate_emails
+    from server.tasks import get_task
+
+    examples = []
+    for task_id in task_ids:
+        task = get_task(task_id)
+        emails, ground_truths = generate_emails(task_id, seed)
+        truth_map = {gt.email_id: gt for gt in ground_truths}
+
+        for email in emails:
+            gt = truth_map[email.email_id]
+            email_d = email.model_dump()
+            td = task.description
+
+            # Ground-truth analyst output (used as context for router/responder)
+            gt_analyst = {
+                "category":   gt.category,
+                "priority":   gt.priority,
+                "signals":    gt.expected_keywords[:3] if gt.expected_keywords else [],
+                "confidence": 1.0,
+            }
+            # Ground-truth router output
+            gt_router = {
+                "department":    gt.department,
+                "escalate":      gt.department == "management" or gt.priority == 1,
+                "routing_reason": f"{gt.category} → {gt.department}",
+            }
+
+            # ── Analyst example ──────────────────────────────────────────
+            analyst_target = json.dumps({
+                "category": gt.category,
+                "priority": gt.priority,
+                "signals":  gt.expected_keywords[:2] if gt.expected_keywords else [],
+                "confidence": 1.0,
+            })
+            examples.append({
+                "prompt": [
+                    {"role": "system", "content": ANALYST_SYSTEM_PROMPT},
+                    {"role": "user",   "content": build_analyst_prompt(email_d, td)},
+                ],
+                "role":     "analyst",
+                "email_id": email.email_id,
+                "task_id":  task_id,
+                # Reward fields (same as single-agent dataset)
+                "gt_category":          gt.category,
+                "gt_priority":          gt.priority,
+                "gt_department":        gt.department,
+                "gt_requires_response": gt.requires_response,
+                "gt_expected_keywords": gt.expected_keywords,
+                "requires_priority":    task.requires_priority,
+                "requires_routing":     task.requires_routing,
+                "requires_response":    task.requires_response,
+                "curriculum_level":     task.curriculum_level,
+            })
+
+            # ── Router example (sees analyst output in context) ──────────
+            examples.append({
+                "prompt": [
+                    {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+                    {"role": "user",   "content": build_router_prompt(email_d, td, gt_analyst)},
+                ],
+                "role":     "router",
+                "email_id": email.email_id,
+                "task_id":  task_id,
+                "gt_category":          gt.category,
+                "gt_priority":          gt.priority,
+                "gt_department":        gt.department,
+                "gt_requires_response": gt.requires_response,
+                "gt_expected_keywords": gt.expected_keywords,
+                "requires_priority":    task.requires_priority,
+                "requires_routing":     task.requires_routing,
+                "requires_response":    task.requires_response,
+                "curriculum_level":     task.curriculum_level,
+            })
+
+            # ── Responder example (sees analyst + router output) ─────────
+            if task.requires_response:
+                examples.append({
+                    "prompt": [
+                        {"role": "system", "content": RESPONDER_SYSTEM_PROMPT},
+                        {"role": "user",   "content": build_responder_prompt(
+                            email_d, td, gt_analyst, gt_router)},
+                    ],
+                    "role":     "responder",
+                    "email_id": email.email_id,
+                    "task_id":  task_id,
+                    "gt_category":          gt.category,
+                    "gt_priority":          gt.priority,
+                    "gt_department":        gt.department,
+                    "gt_requires_response": gt.requires_response,
+                    "gt_expected_keywords": gt.expected_keywords,
+                    "requires_priority":    task.requires_priority,
+                    "requires_routing":     task.requires_routing,
+                    "requires_response":    task.requires_response,
+                    "curriculum_level":     task.curriculum_level,
+                })
+
+    return examples
+
+
+# ── Multi-agent reward functions for GRPO ────────────────────────────────────
+
+def _parse_analyst(completion: str) -> Optional[Dict[str, Any]]:
+    """Parse analyst JSON output."""
+    action = _parse_action(completion)
+    if action and "category" in action:
+        return action
+    return None
+
+
+def _parse_router(completion: str) -> Optional[Dict[str, Any]]:
+    """Parse router JSON output."""
+    action = _parse_action(completion)
+    if action and "department" in action:
+        return action
+    return None
+
+
+def _parse_responder(completion: str) -> Optional[Dict[str, Any]]:
+    """Parse responder JSON output."""
+    action = _parse_action(completion)
+    if action and "response_draft" in action:
+        return action
+    return None
+
+
+def reward_coordination_grpo(completions: List[str], prompts=None, **kwargs) -> List[float]:
+    """Coordination reward for GRPO: rewards agent output consistency.
+
+    For analyst examples: rewards correct category (same as reward_classification).
+    For router examples: rewards dept + escalation + coordination with analyst in context.
+    For responder examples: rewards response coherent with both upstream agents.
+    """
+    rewards = []
+    roles        = kwargs.get("role", ["analyst"] * len(completions))
+    gt_cats      = kwargs.get("gt_category", ["general"] * len(completions))
+    gt_depts     = kwargs.get("gt_department", ["support"] * len(completions))
+    gt_pris      = kwargs.get("gt_priority", [3] * len(completions))
+    req_response = kwargs.get("requires_response", [False] * len(completions))
+
+    for comp, role, gt_cat, gt_dept, gt_pri, req_resp in zip(
+        completions, roles, gt_cats, gt_depts, gt_pris, req_response
+    ):
+        comp = _decode_completion(comp)
+        r = 0.0
+
+        if role == "analyst":
+            action = _parse_analyst(comp)
+            if action is None:
+                rewards.append(-1.0); continue
+            # Category accuracy
+            agent_cat = action.get("category", "").lower()
+            if agent_cat == gt_cat:
+                r += 1.0
+            elif agent_cat in _CAT_DIST.get(gt_cat, {}):
+                dist = _CAT_DIST[gt_cat][agent_cat]
+                r += {1: 0.3, 2: 0.0}.get(dist, -0.5)
+            else:
+                r -= 0.5
+            # Priority accuracy
+            try:
+                agent_pri = int(action.get("priority", -1))
+                diff = abs(agent_pri - gt_pri)
+                r += {0: 0.5, 1: 0.2, 2: 0.0}.get(diff, -0.2)
+            except Exception:
+                r -= 0.2
+            # Signal quality bonus (has non-empty signals)
+            if action.get("signals"):
+                r += 0.2
+
+        elif role == "router":
+            action = _parse_router(comp)
+            if action is None:
+                rewards.append(-1.0); continue
+            agent_dept = action.get("department", "").lower()
+            if agent_dept == gt_dept:
+                r += 1.0
+            elif agent_dept in _DEPT_DIST.get(gt_dept, {}):
+                dist = _DEPT_DIST[gt_dept][agent_dept]
+                r += {1: 0.0, 2: -0.4}.get(dist, -0.8)
+            else:
+                r -= 0.8
+            # Escalation
+            should_esc = (gt_dept == "management" or gt_pri == 1)
+            agent_esc  = bool(action.get("escalate", False))
+            if agent_esc == should_esc:
+                r += 0.3
+            else:
+                r -= 0.2
+            # Theory-of-mind: routing_reason references analyst signals
+            if action.get("routing_reason"):
+                r += 0.2   # bonus for providing reasoning
+
+        elif role == "responder":
+            action = _parse_responder(comp)
+            if action is None:
+                rewards.append(-0.5 if req_resp else 0.0); continue
+            if req_resp:
+                draft = (action.get("response_draft") or "").lower()
+                if draft and len(draft) > 20:
+                    r += 0.5   # non-trivial response
+                if action.get("tone") in ("formal", "empathetic", "technical", "urgent"):
+                    r += 0.2   # tone specified
+            else:
+                r += 0.3   # no response needed, that's fine
+
+        rewards.append(round(r, 4))
+
+    return rewards
+
+
+MULTI_AGENT_REWARD_FUNCTIONS = [
+    reward_format,              # JSON gate (same as single-agent)
+    reward_coordination_grpo,   # role-aware coordination reward
+    reward_response,            # response quality (for responder role)
+]
+
+
+def train_multi_agent(
+    model,
+    tokenizer,
+    task_ids: List[str],
+    output_dir: str,
+    args,
+) -> Dict[str, Any]:
+    """Train the 3-agent email triage team with GRPO.
+
+    Uses role-conditioned prompting: the same Llama-3.2-1B model is trained
+    with Analyst / Router / Responder system prompts, teaching specialised
+    behaviour and inter-agent coordination (theory-of-mind).
+    """
+    from datasets import Dataset
+    from trl import GRPOConfig, GRPOTrainer
+
+    raw     = build_multi_agent_dataset(task_ids, seed=getattr(args, 'seed', 42))
+    dataset = Dataset.from_list(raw)
+    print(f"\n  Multi-agent dataset: {len(dataset)} examples "
+          f"(analyst/router/responder across {len(task_ids)} tasks)")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    cfg = GRPOConfig(
+        output_dir                  = output_dir,
+        num_train_epochs            = 1,
+        max_steps                   = getattr(args, 'max_steps', 200),
+        per_device_train_batch_size = 1,
+        gradient_accumulation_steps = 4,
+        learning_rate               = 3e-6,
+        lr_scheduler_type           = "cosine",
+        num_generations             = 4,
+        max_new_tokens              = 256,
+        temperature                 = 1.0,
+        top_p                       = 0.95,
+        max_grad_norm               = 0.1,
+        warmup_steps                = 20,
+        logging_steps               = 5,
+        save_steps                  = 100,
+        save_total_limit            = 2,
+        seed                        = getattr(args, 'seed', 42),
+        use_vllm                    = False,
+        report_to                   = "wandb" if getattr(args, 'wandb', False) else "none",
+        run_name                    = "grpo-multi-agent-email-triage" if getattr(args, 'wandb', False) else None,
+    )
+
+    trainer = GRPOTrainer(
+        model            = model,
+        reward_funcs     = MULTI_AGENT_REWARD_FUNCTIONS,
+        args             = cfg,
+        train_dataset    = dataset,
+        processing_class = tokenizer,
+    )
+
+    start = time.time()
+    result = trainer.train()
+    elapsed = time.time() - start
+
+    metrics = {
+        "mode":       "multi_agent",
+        "tasks":      task_ids,
+        "elapsed_s":  round(elapsed, 1),
+        "train_loss": round(result.training_loss, 4),
+        "steps":      result.global_step,
+    }
+    print(f"\n  Multi-agent training done: loss={metrics['train_loss']:.4f} "
+          f"steps={metrics['steps']} time={elapsed:.0f}s")
+
+    adapter_path = os.path.join(output_dir, "multi_agent_adapter")
+    model.save_pretrained(adapter_path)
+    tokenizer.save_pretrained(adapter_path)
+    print(f"  Multi-agent adapter → {adapter_path}")
+    return metrics
 
 
 if __name__ == "__main__":

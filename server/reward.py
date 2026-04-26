@@ -309,6 +309,216 @@ def compute_step_reward(
     return round(reward, 4), feedback
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  Multi-Agent Coordination Rewards — Theme #1: Multi-Agent Interactions
+#
+#  These reward functions score INTER-AGENT consistency.  They fire on top of
+#  the individual per-agent rewards and capture coordination quality:
+#    • consistency_reward  — analyst and router produce semantically aligned decisions
+#    • theory_of_mind      — router explicitly uses analyst signals correctly
+#    • coalition_reward    — responder draft is consistent with analyst+router context
+#    • disagreement_penalty — penalise when agents contradict each other
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Maps category → expected department (for consistency checking)
+_CATEGORY_DEPT_MAP: Dict[str, str] = {
+    "urgent":    "engineering",   # outages/security → engineering or management
+    "technical": "engineering",
+    "billing":   "billing",
+    "spam":      "support",
+    "general":   "support",
+}
+
+# Category → should escalate flag
+_CATEGORY_ESCALATION: Dict[str, bool] = {
+    "urgent":    True,
+    "technical": False,
+    "billing":   False,
+    "spam":      False,
+    "general":   False,
+}
+
+
+def reward_coordination(
+    analyst_category: str,
+    router_department: str,
+    router_escalate: bool,
+) -> float:
+    """Coordination reward: analyst and router produce consistent decisions.
+
+    Rewards alignment between the analyst's category and the router's dept.
+    This is the core multi-agent innovation: individually correct decisions that
+    are inconsistent with each other are penalised.
+
+      - Fully consistent (category→dept aligned + escalation consistent): +0.10
+      - Dept consistent, escalation inconsistent:                          +0.04
+      - Dept inconsistent (major disagreement):                            -0.08
+      - Invalid values:                                                    -0.05
+    """
+    if analyst_category not in VALID_CATEGORIES:
+        return -0.05
+    if router_department not in VALID_DEPARTMENTS:
+        return -0.05
+
+    expected_dept = _CATEGORY_DEPT_MAP.get(analyst_category, "support")
+    dept_ok = (router_department == expected_dept)
+
+    # Management routing is always valid for urgent categories
+    if analyst_category == "urgent" and router_department == "management":
+        dept_ok = True
+
+    expected_esc = _CATEGORY_ESCALATION.get(analyst_category, False)
+    esc_ok = (router_escalate == expected_esc)
+
+    if dept_ok and esc_ok:
+        return 0.10   # fully consistent team decision
+    if dept_ok:
+        return 0.04   # routing aligned, escalation off
+    return -0.08      # major routing disagreement
+
+
+def reward_theory_of_mind(
+    analyst_signals: List[str],
+    router_reason:   Optional[str],
+    analyst_category: str,
+) -> float:
+    """Theory-of-mind reward: did the router actually use the analyst's signals?
+
+    The router receives the analyst's signals and must demonstrate it understood
+    them by referencing relevant keywords in its routing_reason.
+    This tests whether agents model each other's beliefs, not just act in isolation.
+
+      - Router reason references ≥1 analyst signal:            +0.05
+      - Router reason references category the analyst flagged:  +0.03
+      - Router provided no reason or reasoning is irrelevant:    0.00
+    """
+    if not router_reason or not analyst_signals:
+        return 0.00
+
+    reason_lower = router_reason.lower()
+    signal_hits  = sum(1 for s in analyst_signals if s.lower() in reason_lower)
+
+    if signal_hits >= 1:
+        return 0.05   # router demonstrably used analyst intelligence
+    if analyst_category and analyst_category.lower() in reason_lower:
+        return 0.03   # router at least referenced the analyst's category
+    return 0.00
+
+
+def reward_coalition(
+    response_draft:    Optional[str],
+    analyst_category:  str,
+    router_department: str,
+    requires_response: bool,
+) -> float:
+    """Coalition reward: responder draft is consistent with analyst + router context.
+
+    A valid coalition response references both the category domain AND the
+    correct department context.  This rewards coordinated team output.
+
+      - Draft mentions both category and department keywords:  +0.08
+      - Draft mentions at least one:                           +0.03
+      - Draft required but missing:                           -0.05
+      - Not required, no draft:                                0.00
+    """
+    if not requires_response:
+        return 0.00
+    if not response_draft:
+        return -0.05
+
+    draft = response_draft.lower()
+
+    # Category-relevant keywords
+    _cat_kw: Dict[str, List[str]] = {
+        "billing":   ["billing", "invoice", "payment", "charge", "refund"],
+        "technical": ["technical", "bug", "error", "api", "investigation"],
+        "urgent":    ["urgent", "outage", "incident", "critical", "immediately"],
+        "spam":      [],   # no response expected for spam
+        "general":   ["inquiry", "request", "information", "assist"],
+    }
+    # Department-relevant keywords
+    _dept_kw: Dict[str, List[str]] = {
+        "billing":     ["billing", "finance", "invoice", "payment"],
+        "engineering": ["engineering", "technical", "development", "team"],
+        "management":  ["management", "escalate", "senior", "priority"],
+        "support":     ["support", "help", "assist", "team"],
+    }
+
+    cat_hit  = any(kw in draft for kw in _cat_kw.get(analyst_category, []))
+    dept_hit = any(kw in draft for kw in _dept_kw.get(router_department, []))
+
+    if cat_hit and dept_hit:
+        return 0.08   # full coalition alignment
+    if cat_hit or dept_hit:
+        return 0.03   # partial alignment
+    return 0.00
+
+
+def compute_multi_agent_reward(
+    email_id:           str,
+    analyst_category:   str,
+    analyst_priority:   int,
+    analyst_signals:    List[str],
+    router_department:  str,
+    router_escalate:    bool,
+    router_reason:      Optional[str],
+    response_draft:     Optional[str],
+    ground_truth,                         # EmailGroundTruth
+    requires_response:  bool = False,
+    valid_email_ids:    Optional[Set[str]] = None,
+) -> tuple[float, float, Dict[str, float], str]:
+    """Full multi-agent reward computation.
+
+    Returns:
+        (total_reward, coordination_reward, per_agent_rewards, feedback_str)
+    """
+    if valid_email_ids is None:
+        valid_email_ids = set()
+
+    # ── Individual agent rewards (same verifiers as single-agent) ──────────
+    analyst_action  = {"email_id": email_id, "category": analyst_category,
+                       "priority": analyst_priority}
+    router_action   = {"email_id": email_id, "department": router_department,
+                       "escalate": router_escalate}
+    responder_action = {"email_id": email_id, "response_draft": response_draft}
+
+    r_fmt   = reward_format_compliance({"email_id": email_id, "category": analyst_category}, valid_email_ids)
+    r_cls   = reward_classification(analyst_action, ground_truth)
+    r_pri   = reward_priority(analyst_action, ground_truth)
+    r_rte   = reward_routing(router_action, ground_truth)
+    r_esc   = reward_escalation(router_action, ground_truth)
+    r_resp  = reward_response_quality(responder_action, ground_truth) if requires_response else 0.0
+
+    individual_total = r_fmt + r_cls + r_pri + r_rte + r_esc + r_resp
+
+    # ── Multi-agent coordination rewards ───────────────────────────────────
+    r_coord = reward_coordination(analyst_category, router_department, router_escalate)
+    r_tom   = reward_theory_of_mind(analyst_signals, router_reason, analyst_category)
+    r_coal  = reward_coalition(response_draft, analyst_category, router_department, requires_response)
+
+    coordination_total = r_coord + r_tom + r_coal
+    total = round(individual_total + coordination_total, 4)
+
+    per_agent = {
+        "analyst":   round(r_fmt + r_cls + r_pri, 4),
+        "router":    round(r_rte + r_esc, 4),
+        "responder": round(r_resp, 4),
+        "coordination": round(coordination_total, 4),
+    }
+
+    parts = []
+    if r_cls > 0:   parts.append(f"✓ category={ground_truth.category}")
+    elif r_cls < 0: parts.append(f"✗ category (got {analyst_category})")
+    if r_rte > 0:   parts.append(f"✓ dept={ground_truth.department}")
+    elif r_rte < 0: parts.append(f"✗ dept (got {router_department})")
+    if r_coord > 0: parts.append(f"✓ team consistent (+{r_coord:.2f})")
+    elif r_coord < 0: parts.append(f"✗ team disagreement ({r_coord:.2f})")
+    if r_tom > 0:   parts.append(f"✓ theory-of-mind (+{r_tom:.2f})")
+
+    feedback = " | ".join(parts) if parts else "Multi-agent step recorded."
+    return total, coordination_total, per_agent, feedback
+
+
 def compute_time_efficiency(steps_taken: int, max_steps: int, num_emails: int) -> float:
     """Score the agent's time efficiency (0.0–1.0).
 

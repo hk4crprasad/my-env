@@ -47,8 +47,12 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models import EmailAction, EmailObservation
+from models import (
+    EmailAction, EmailObservation,
+    MultiAgentAction, MultiAgentObservation,
+)
 from server.environment import EmailTriageEnvironment
+from server.multi_agent_env import MultiAgentTriageEnvironment
 from server.tasks import list_task_ids, get_curriculum_order, TASKS
 from server.graders import get_rubric_definitions
 from server.reward import REWARD_RUBRIC
@@ -464,6 +468,149 @@ async def analytics():
         "summary": summary,
         "by_task": stats,
         "storage": "mongodb" if db.online else "in-memory",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Multi-Agent Endpoints — Theme #1: Multi-Agent Interactions
+#
+#  Three specialist agents (Analyst → Router → Responder) collaborate on each
+#  email step.  The /agents/* endpoints expose this multi-agent protocol.
+#  Each step rewards both individual accuracy AND inter-agent coordination.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ma_sessions: OrderedDict[str, MultiAgentTriageEnvironment] = OrderedDict()
+_ma_latest_sid: Optional[str] = None
+
+
+def _get_ma_session(sid: Optional[str]) -> tuple[str, MultiAgentTriageEnvironment]:
+    s = sid or _ma_latest_sid
+    if s is None or s not in _ma_sessions:
+        raise HTTPException(
+            status_code=400,
+            detail="No active multi-agent session. Call POST /agents/reset first.",
+        )
+    return s, _ma_sessions[s]
+
+
+def _create_ma_session(episode_id: Optional[str]) -> tuple[str, MultiAgentTriageEnvironment]:
+    global _ma_latest_sid
+    sid = episode_id or str(uuid4())
+    if sid not in _ma_sessions:
+        if len(_ma_sessions) >= MAX_SESSIONS:
+            _ma_sessions.popitem(last=False)
+        _ma_sessions[sid] = MultiAgentTriageEnvironment()
+    _ma_latest_sid = sid
+    return sid, _ma_sessions[sid]
+
+
+@app.post("/agents/reset")
+async def agents_reset(request: ResetRequest = ResetRequest()):
+    """Start a multi-agent triage episode.
+
+    Returns the inbox and agent role prompts for each specialist
+    (Analyst, Router, Responder).  Use the session_id in /agents/step.
+    """
+    from server.multi_agent_env import get_agent_prompts
+    sid, env = _create_ma_session(request.episode_id)
+    obs = env.reset(task_id=request.task_id, seed=request.seed, episode_id=sid)
+    obs_dict = obs.model_dump()
+
+    # Include agent prompts in the response so clients know what each agent should do
+    agent_prompts = {}
+    if obs_dict.get("emails"):
+        first_email = obs_dict["emails"][0]
+        prompts = get_agent_prompts(first_email, obs_dict.get("task_description", ""))
+        agent_prompts = {
+            role: {"system": sys_p, "user": usr_p}
+            for role, (sys_p, usr_p) in prompts.items()
+        }
+
+    return {
+        "observation":   obs_dict,
+        "session_id":    sid,
+        "done":          obs.done,
+        "agent_prompts": agent_prompts,
+        "team":          ["analyst", "router", "responder"],
+        "protocol": (
+            "1. Analyst reads email → outputs category/priority/signals. "
+            "2. Router sees email+analyst → outputs dept/escalate/reason. "
+            "3. Responder sees email+analyst+router → outputs response_draft. "
+            "Submit all three in one POST /agents/step."
+        ),
+    }
+
+
+@app.post("/agents/step")
+async def agents_step(
+    action:     MultiAgentAction,
+    session_id: Optional[str] = None,
+):
+    """Submit a coordinated 3-agent triage decision.
+
+    The body must include analyst, router, and responder sub-actions.
+    Returns per-agent rewards + coordination/theory-of-mind bonuses.
+    """
+    from server.multi_agent_env import get_agent_prompts
+    sid, env = _get_ma_session(session_id)
+    obs = env.step(action)
+    obs_dict = obs.model_dump()
+
+    # Attach next-email prompts so the client knows what to send next
+    next_prompts = {}
+    if obs_dict.get("emails") and not obs.done:
+        next_email = obs_dict["emails"][0]
+        prompts    = get_agent_prompts(
+            next_email,
+            obs_dict.get("task_description", ""),
+            analyst_out={"category": action.analyst.category,
+                         "priority": action.analyst.priority,
+                         "signals":  action.analyst.signals},
+            router_out ={"department":    action.router.department,
+                         "escalate":      action.router.escalate,
+                         "routing_reason": action.router.routing_reason},
+        )
+        next_prompts = {
+            role: {"system": sys_p, "user": usr_p}
+            for role, (sys_p, usr_p) in prompts.items()
+        }
+
+    return {
+        "observation":        obs_dict,
+        "reward":             obs.reward,
+        "coordination_reward": obs.coordination_reward,
+        "agent_rewards": {fb["agent"]: fb["reward"]
+                          for fb in obs_dict.get("agent_feedback", [])},
+        "done":               obs.done,
+        "session_id":         sid,
+        "next_agent_prompts": next_prompts,
+    }
+
+
+@app.get("/agents/state")
+async def agents_state(session_id: Optional[str] = None):
+    """Current multi-agent session state."""
+    sid, env = _get_ma_session(session_id)
+    s = env.state
+    return {
+        "session_id":  sid,
+        "episode_id":  s.episode_id,
+        "step_count":  s.step_count,
+    }
+
+
+@app.get("/agents/schema")
+async def agents_schema():
+    """JSON schemas for MultiAgentAction and MultiAgentObservation."""
+    return {
+        "action":      MultiAgentAction.model_json_schema(),
+        "observation": MultiAgentObservation.model_json_schema(),
+        "roles":       ["analyst", "router", "responder"],
+        "description": (
+            "Multi-agent protocol: Analyst classifies, Router routes "
+            "(using Analyst output for theory-of-mind), Responder drafts "
+            "(using both for coalition scoring). Submit all three in one step."
+        ),
     }
 
 
