@@ -499,7 +499,9 @@ def build_ui() -> gr.Blocks:
                         feedback_md = gr.Markdown("(no action yet)")
                         cumulative  = gr.Number(label="Cumulative reward", value=0.0, interactive=False)
 
-                demo.load(fn=lambda: new_env(), inputs=None, outputs=env_state)
+                # queue=False: new_env() is trivial (no I/O), skip queue so it
+                # doesn't appear in logs or compete with run_compare for the slot.
+                demo.load(fn=lambda: new_env(), inputs=None, outputs=env_state, queue=False)
 
                 reset_btn.click(
                     fn=reset_episode,
