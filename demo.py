@@ -428,7 +428,7 @@ def _gpu_status_md() -> str:
                 f"cc={p.major}.{p.minor}  |  "
                 f"VRAM={p.total_memory/1e9:.1f} GB  |  "
                 f"CUDA {torch.version.cuda}  ✅  \n"
-                f"> Model is **not loaded yet** — click ▶ Run to start download (~60 s first run)."
+                f"> Model is **not loaded yet** — click the **▶ Run side-by-side** button below to start."
             )
         return "> ⚠ **No GPU detected.** Adapter inference requires T4. Check Space hardware tier."
     except Exception as e:
