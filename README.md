@@ -6,6 +6,7 @@ colorTo: purple
 sdk: docker
 app_port: 7860
 pinned: false
+hardware: t4-small
 ---
 
 # Email Triage RL Environment

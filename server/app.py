@@ -135,6 +135,21 @@ if _HAS_OPENENV_CORE:
 @app.on_event("startup")
 async def startup() -> None:
     await db.connect()
+
+    # ── GPU diagnostic (appears first in logs so you can tell if T4 is live) ─
+    try:
+        import torch
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            vram = props.total_memory / 1e9
+            print(f"🖥  GPU: {props.name}  cc={props.major}.{props.minor}  VRAM={vram:.1f} GB  ✅", flush=True)
+        else:
+            print("⚠  torch.cuda.is_available() = False — running on CPU. "
+                  "Adapter tab will not work. Check that hardware: t4-small is "
+                  "set in README.md frontmatter and the Space is on a GPU tier.", flush=True)
+    except ImportError:
+        print("⚠  torch not importable at startup — GPU status unknown", flush=True)
+
     # ── Try to activate openenv-core WebSocket protocol ──────────────────
     global _HAS_OPENENV_CORE, _openenv_app
     try:
@@ -160,10 +175,9 @@ async def startup() -> None:
             # CRITICAL: must call .queue() before mounting into FastAPI.
             # Without this, Gradio accepts jobs but workers never start
             # → queue/join returns 200 but function is never executed.
-            blocks.queue(
-                max_size=10,          # allow up to 10 queued requests
-                default_concurrency_limit=1,  # one model inference at a time (VRAM)
-            )
+            # Gradio 5+ removed default_concurrency_limit from queue(); concurrency
+            # is now set per-event via concurrency_limit= on the click handler in demo.py
+            blocks.queue(max_size=10)
             gr.mount_gradio_app(app, blocks, path="/demo")
             print("✅ Gradio demo mounted at /demo (queue enabled)")
         except Exception as e:

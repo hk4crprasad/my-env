@@ -176,7 +176,8 @@ def _load_adapter_lazy() -> Tuple[Any, Any, str]:
         props   = torch.cuda.get_device_properties(0)
         vram_gb = props.total_memory / 1e9
         cc_major, cc_minor = props.major, props.minor
-        print(f"🔍 GPU detected: {props.name} (cc={cc_major}.{cc_minor}, VRAM={vram_gb:.1f} GB)",flush=True)
+        print(f"🔍 GPU detected: {props.name} (cc={cc_major}.{cc_minor}, VRAM={vram_gb:.1f} GB)", flush=True)
+        print(f"    CUDA version: {torch.version.cuda}  |  torch: {torch.__version__}", flush=True)
 
         info_lines = [f"Loading {BASE_MODEL_ID} …"]
         print(f"📥 Downloading tokenizer: {BASE_MODEL_ID} ...",flush=True)
@@ -293,10 +294,11 @@ def _score_action(action: Dict[str, Any], task_id: str, seed: int) -> Tuple[floa
     }
 
 
-def run_compare(task_id: str, seed: int, email_index: int) -> Tuple[str, str, str, str, str]:
+def run_compare(task_id: str, seed: int, email_index: int, progress: gr.Progress = gr.Progress()) -> Tuple[str, str, str, str, str]:
     """Pick one email from the inbox; run baseline + trained; return both side-by-side."""
     # Log immediately — BEFORE any logic — so we know the fn was called
     print(f"🚀 run_compare START: task={task_id} seed={seed} idx={email_index}", flush=True)
+    progress(0, desc="Loading email…")
     try:
         seed = int(seed); email_index = int(email_index)
     except (ValueError, TypeError):
@@ -317,8 +319,18 @@ def run_compare(task_id: str, seed: int, email_index: int) -> Tuple[str, str, st
     email = emails[email_index]
     email_md = format_email(email)
 
+    progress(0.05, desc="Loading model… (first run downloads ~3 GB, ~60 s on T4)")
     print(f"📨 Email loaded: {email.get('email_id')} — now loading model...", flush=True)
     try:
+        import torch
+        if not torch.cuda.is_available():
+            msg = (
+                "⚠ No GPU detected — adapter inference requires a CUDA GPU. "
+                "Check that this Space is on the T4 hardware tier and that "
+                "`hardware: t4-small` is in the README.md frontmatter."
+            )
+            print(f"❌ {msg}", flush=True)
+            return email_md, "", "", "", msg
         model, tokenizer, info = _load_adapter_lazy()
     except gr.Error as e:
         print(f"❌ Model loading failed: {type(e).__name__}: {e}", flush=True)
@@ -329,10 +341,14 @@ def run_compare(task_id: str, seed: int, email_index: int) -> Tuple[str, str, st
 
     msgs, _ = _build_inference_prompt(email, od.get("task_description", ""))
 
-    # Baseline (adapter disabled)
+    progress(0.50, desc="Running baseline (adapter OFF)…")
+    print("🔵 Generating baseline output…", flush=True)
     base_text = _generate(model, tokenizer, msgs, use_adapter=False)
-    # Trained (adapter enabled)
+
+    progress(0.75, desc="Running trained model (adapter ON)…")
+    print("🟢 Generating trained output…", flush=True)
     train_text = _generate(model, tokenizer, msgs, use_adapter=True)
+    progress(0.95, desc="Scoring actions…")
 
     def _to_action(text: str) -> Optional[Dict[str, Any]]:
         try:
@@ -470,7 +486,9 @@ def build_ui() -> gr.Blocks:
                     "Loads `Qwen/Qwen2.5-3B-Instruct` once, then toggles the LoRA "
                     f"adapter `{ADAPTER_MODEL_ID}` on/off. Both runs see the **same** email; "
                     "their actions are scored by the live reward function and shown next to ground truth.\n\n"
-                    "First click loads the model (~30 s on a paid GPU Space). Subsequent runs are fast."
+                    "⏳ **First click downloads ~3 GB and loads the model — expect 60–90 s on T4.** "
+                    "A progress bar will appear. Subsequent runs are fast (model stays in VRAM). "
+                    "Requires the Space to be on the **T4 GPU** hardware tier."
                 )
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -491,6 +509,7 @@ def build_ui() -> gr.Blocks:
                     fn=run_compare,
                     inputs=[cmp_task, cmp_seed, cmp_idx],
                     outputs=[cmp_email, cmp_base, cmp_train, cmp_truth, info_md],
+                    concurrency_limit=1,  # one GPU inference at a time (Gradio 5/6)
                 )
 
     return demo
