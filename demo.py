@@ -178,9 +178,20 @@ def _load_adapter_lazy() -> Tuple[Any, Any, str]:
         if tok.pad_token is None:
             tok.pad_token = tok.eos_token
 
-        # Pick precision based on VRAM
-        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
-        if vram_gb < 12:
+        # ── Dispatch by compute capability AND VRAM ─────────────────────
+        # T4 (HF Spaces "T4 small/medium") = Turing, cc 7.5 — supports FP16
+        # but NOT BF16. Ampere+ (cc 8.0+) supports BF16 and full-precision LoRA.
+        props   = torch.cuda.get_device_properties(0)
+        vram_gb = props.total_memory / 1e9
+        cc_major, cc_minor = props.major, props.minor
+        supports_bf16 = cc_major >= 8
+
+        # 4-bit NF4 fits any T4-class GPU comfortably (~4 GB) and is the
+        # safe default for HF Spaces small-tier; full-precision only when
+        # we have BF16 + plenty of VRAM.
+        use_4bit = (not supports_bf16) or (vram_gb < 12)
+
+        if use_4bit:
             bnb = BitsAndBytesConfig(
                 load_in_4bit             = True,
                 bnb_4bit_quant_type      = "nf4",
@@ -191,13 +202,17 @@ def _load_adapter_lazy() -> Tuple[Any, Any, str]:
                 BASE_MODEL_ID, quantization_config=bnb, device_map="auto",
                 token=HF_TOKEN, trust_remote_code=True,
             )
-            info_lines.append(f"VRAM: {vram_gb:.1f} GB → 4-bit NF4")
+            info_lines.append(
+                f"GPU: {props.name} cc={cc_major}.{cc_minor} VRAM={vram_gb:.1f} GB → 4-bit NF4"
+            )
         else:
             base = AutoModelForCausalLM.from_pretrained(
                 BASE_MODEL_ID, torch_dtype=torch.bfloat16, device_map="auto",
                 token=HF_TOKEN, trust_remote_code=True,
             )
-            info_lines.append(f"VRAM: {vram_gb:.1f} GB → bfloat16")
+            info_lines.append(
+                f"GPU: {props.name} cc={cc_major}.{cc_minor} VRAM={vram_gb:.1f} GB → bfloat16"
+            )
 
         info_lines.append(f"Loading LoRA adapter {ADAPTER_MODEL_ID} …")
         model = PeftModel.from_pretrained(base, ADAPTER_MODEL_ID, token=HF_TOKEN)
@@ -211,7 +226,7 @@ def _load_adapter_lazy() -> Tuple[Any, Any, str]:
 
 def _build_inference_prompt(email: Dict[str, Any], task_description: str) -> Tuple[list, str]:
     """Mirror inference.py / train.py prompting for parity."""
-    from inference import SYSTEM_PROMPT  # reuse the canonical prompt
+    from train import SYSTEM_PROMPT  # must match what the adapter was trained with
     from train import format_email_prompt
     user = format_email_prompt(email, task_description)
     msgs = [

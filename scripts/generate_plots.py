@@ -149,7 +149,7 @@ def plot_score_comparison():
     ax.set_xticklabels([t.upper() for t in tasks], fontsize=11)
     ax.set_ylabel("Final episode score (0.0–1.0)", fontsize=11)
     ax.set_xlabel("Task difficulty", fontsize=11)
-    ax.set_title("GRPO training lifts scores at every difficulty level\nQwen/Qwen3.5-2B + LoRA, seed=99",
+    ax.set_title("GRPO training lifts scores at every difficulty level\nQwen/Qwen2.5-3B-Instruct + LoRA, seed=99",
                   fontsize=12, fontweight="bold")
     ax.set_ylim(0, 1.05)
     ax.legend(loc="upper right", framealpha=0.95)

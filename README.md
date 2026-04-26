@@ -28,7 +28,7 @@ Haraprasad Hota · Subhendu Samal · Ashutosh Panigrahi
 
 > **Zero-shot Qwen2.5-3B routes billing disputes to Engineering 60% of the time.**  
 > **After 300 GRPO steps on our environment: 59% on hard tasks (+0.30), 80% on easy (+0.20).**  
-> **We built what made that possible — an OpenEnv RL environment with 7 independent reward verifiers and 3-level curriculum learning.**
+> **We built what made that possible — an OpenEnv RL environment with 8 independent reward verifiers and 3-level curriculum learning.**
 
 ---
 
@@ -67,7 +67,7 @@ At each step the agent sees one unprocessed email and must output a JSON action:
 }
 ```
 
-The environment scores this action using **7 independent reward components** and returns feedback immediately.
+The environment scores this action using **8 independent reward components** and returns feedback immediately.
 
 ---
 
@@ -86,19 +86,20 @@ Each level adds genuine complexity — not just more emails:
 - **Medium**: Phishing emails, billing-urgent hybrids, multi-language account lockouts, ambiguous API questions
 - **Hard**: Thread chains needing context, red herrings, GDPR compliance audits, security disclosures, mandatory response drafts
 
-### Seven Independent Reward Components
+### Eight Independent Reward Components
 
 Independence is the core anti-hacking design. The model cannot game classification to avoid poor routing — they are measured by separate, isolated functions.
 
 | Component | Max | Min | Notes |
 |-----------|-----|-----|-------|
 | `format_compliance` | +0.05 | -0.15 | Checked first; gates all other rewards |
-| `classification` | +0.20 | -0.10 | Adjacent categories get partial credit |
-| `priority` | +0.15 | -0.05 | Off-by-1 → +0.07; off-by-2+ → penalty |
-| `routing` | +0.15 | -0.08 | Strict exact-match department |
-| `response_quality` | +0.30 | -0.10 | Keyword coverage (≥60% → full; ≥30% → half) |
-| `escalation` | +0.05 | -0.10 | Penalises both missed and unnecessary |
+| `classification` | +0.30 | -0.15 | Semantic distance: exact +0.30, adjacent +0.10, hallucinated -0.15 |
+| `priority` | +0.20 | -0.10 | Graduated: exact +0.20, off-by-1 +0.08, off-by-2 0, off-by-3+ -0.08 |
+| `routing` | +0.20 | -0.15 | Semantic dept distance: exact +0.20, adjacent 0, far -0.08/-0.15 |
+| `response_quality` | +0.35 | -0.15 | Keyword coverage (≥70% → +0.35; ≥50% → +0.25; ≥30% → +0.15) + length penalty |
+| `escalation` | +0.10 | -0.10 | F1-style: TP +0.10, TN +0.03, FP -0.10, FN -0.05 |
 | `anti_reprocessing` | 0.00 | -0.15 | Short-circuits everything else |
+| `inbox_completion` | +0.05 | 0.00 | Bonus for processing every email in the inbox |
 
 ### Anti-Reward-Hacking Measures
 
@@ -121,13 +122,15 @@ Deterministic email corpus (seed-based)
          ↓
 Prompt: "Triage this email: [email content]"
          ↓
-Model generates N=4 completions per prompt
+Model generates N=8 completions per prompt
          ↓
-4 independent reward functions score each completion:
-  reward_classification  →  [-0.5, 1.0]
-  reward_priority        →  [-0.2, 1.0]
-  reward_routing         →  [-0.5, 1.0]
-  reward_format          →  [-1.0, 0.5]
+6 independent reward functions score each completion:
+  reward_format          →  [-1.0, 0.5]    (gate)
+  reward_classification  →  [-1.0, 1.0]    (semantic distance)
+  reward_priority        →  [-0.5, 1.0]    (graduated)
+  reward_routing         →  [-1.0, 1.0]    (semantic distance)
+  reward_escalation      →  [-1.0, 1.0]    (F1-style)
+  reward_response        →  [-1.0, 1.0]    (keyword coverage)
          ↓
 GRPO: shift probability toward higher-scoring completions
          ↓
@@ -139,10 +142,10 @@ No value model needed — GRPO handles advantage estimation
 ```bash
 # Full curriculum training (easy → medium → hard)
 python train.py \
-  --model Qwen/Qwen3.5-2B \
+  --model Qwen/Qwen2.5-3B-Instruct \
   --task curriculum \
-  --max-steps 200 \
-  --num-generations 4
+  --max-steps 300 \
+  --num-generations 8
 
 # Single task
 python train.py --task easy --max-steps 100
@@ -154,7 +157,7 @@ Or run the [Colab notebook](notebooks/train_grpo.ipynb) directly — no local GP
 
 ## Training Results
 
-> **Setup**: `Qwen/Qwen3.5-2B`, GRPO via TRL + Unsloth, 4 generations/prompt, LoRA r=16, run on A100 (T4-compatible)
+> **Setup**: `Qwen/Qwen2.5-3B-Instruct`, GRPO via TRL + Unsloth, 8 generations/prompt, LoRA r=32, run on A100 (T4-compatible)
 
 ### 1. Reward Verifier Sanity Check (real, deterministic)
 
@@ -174,7 +177,7 @@ Before any training, we ran the deterministic verifiers on **perfect actions vs.
 
 ![Score Comparison](plots/score_comparison.png)
 
-*Episode final score on the held-out evaluation seed (seed=99). Baseline = `Qwen/Qwen3.5-2B` zero-shot; Trained = same model after curriculum GRPO (easy → medium → hard).*
+*Episode final score on the held-out evaluation seed (seed=99). Baseline = `Qwen/Qwen2.5-3B-Instruct` zero-shot; Trained = same model after curriculum GRPO (easy → medium → hard).*
 
 | Task | Baseline (0-shot) | After GRPO | Δ |
 |------|-------------------|------------|---|
@@ -333,7 +336,7 @@ server/
   environment.py     — EmailTriageEnvironment (subclasses openenv.env.Env)
   tasks.py           — Task definitions with curriculum metadata
   email_generator.py — Deterministic 20-email corpus (seed-based)
-  reward.py          — 7 independent reward components + REWARD_RUBRIC
+  reward.py          — 8 independent reward components + REWARD_RUBRIC
   graders.py         — Episode graders + rubric API
   database.py        — MongoDB persistence (Motor, with in-memory fallback)
 models.py            — Pydantic Action/Observation/State models

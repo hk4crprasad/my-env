@@ -61,11 +61,12 @@ POST /step       → send action      → returns {observation, reward, done}
 GET  /state      → episode metadata → returns {episode_id, step_count}
 GET  /health     → liveness check   → returns {"status":"healthy"}
 GET  /schema     → JSON schemas for Action + Observation
-GET  /rubric     → full reward rubric (7 components + anti-hacking design)
+GET  /rubric     → full reward rubric (8 components + anti-hacking design)
 GET  /tasks      → list easy/medium/hard tasks
 GET  /curriculum → advancement thresholds
 GET  /leaderboard → top sessions by score
 GET  /analytics  → per-task aggregated stats
+GET  /demo       → Gradio interactive UI (Baseline vs Trained adapter tab)
 ```
 
 **WebSocket (openenv-core protocol)**:
@@ -105,19 +106,20 @@ async with EmailTriageClient(base_url="http://localhost:7860") as env:
 
 ### ✅ Grading Logic — Reward System Makes Sense
 
-**7 independent reward components** — each verifiable in isolation:
+**8 independent reward components** — each verifiable in isolation:
 
 ```
-reward_classification()   → +0.20 correct category | -0.10 wrong
-reward_priority()         → +0.15 exact | +0.07 off-by-1 | 0 off-by-2+
-reward_routing()          → +0.15 correct department | -0.08 wrong
-reward_response_quality() → +0.30 ≥60% keywords | +0.15 ≥30% | -0.10 if required & missing
-reward_escalation()       → +0.05 if correctly escalated | -0.10 wrong
+reward_classification()   → +0.30 exact | +0.10 adjacent | -0.08 far | -0.15 hallucinated
+reward_priority()         → +0.20 exact | +0.08 off-by-1 | 0.00 off-by-2 | -0.08 off-by-3+
+reward_routing()          → +0.20 exact dept | 0.00 adjacent | -0.08 far | -0.15 hallucinated
+reward_response_quality() → +0.35 ≥70% keywords | +0.25 ≥50% | +0.15 ≥30% | -0.15 if required & missing
+reward_escalation()       → +0.10 TP | +0.03 TN | -0.10 FP | -0.05 FN  (F1-style)
 reward_format_compliance()→ +0.05 valid email_id | -0.15 invalid (applied first)
 reward_deduplication()    → -0.15 if email already processed (anti-loop)
+reward_inbox_completion() → +0.05 if all emails processed (completion bonus)
 ```
 
-**Why 7 independent components prevent reward hacking:**
+**Why 8 independent components prevent reward hacking:**
 1. **Format gate first** — if the agent sends a garbage action, it gets -0.15 and nothing else. It cannot compensate with a great category guess.
 2. **Deduplication penalty** — the agent cannot repeatedly re-submit the best email to farm rewards. Reprocessing costs -0.15.
 3. **Hidden keywords** — response quality is graded against a hidden keyword set the agent never sees. It cannot reverse-engineer what to write.
@@ -156,7 +158,7 @@ my-env/
 ├── server/
 │   ├── app.py            ← FastAPI: REST + openenv-core WebSocket mount
 │   ├── environment.py    ← EmailTriageEnvironment: reset(), step(), state()
-│   ├── reward.py         ← 7 reward functions + REWARD_RUBRIC dict
+│   ├── reward.py         ← 8 reward functions + REWARD_RUBRIC dict
 │   ├── graders.py        ← Episode-level graders (5 dimensions)
 │   ├── tasks.py          ← Task definitions: easy/medium/hard
 │   ├── email_generator.py← Seeded procedural email generation
@@ -170,7 +172,7 @@ my-env/
 │   └── demo_and_test.ipynb← Colab: environment demo + inference + charts
 │
 └── plots/
-    ├── reward_spread.png     ← 7-component reward separation
+    ├── reward_spread.png     ← 8-component reward separation
     ├── score_comparison.png  ← Baseline vs trained (all 3 tasks)
     ├── dimension_breakdown.png← Per-dimension improvement
     └── training_curve.png    ← GRPO reward curve during training
@@ -197,11 +199,11 @@ server/app.py validates EmailAction with Pydantic
 server/environment.py calls compute_step_reward(action, ground_truth)
   → reward_format_compliance()   # -0.15 if invalid → stop here
   → reward_deduplication()       # -0.15 if already processed → stop here
-  → reward_classification()      # +0.20 / -0.10
-  → reward_priority()            # +0.15 / +0.07 / 0.00
-  → reward_routing()             # +0.15 / -0.08
-  → reward_response_quality()    # +0.30 / +0.15 / -0.10
-  → reward_escalation()          # +0.05 / -0.10
+  → reward_classification()      # +0.30 / +0.10 / -0.08 (semantic distance)
+  → reward_priority()            # +0.20 / +0.08 / 0.00 / -0.08 (graduated)
+  → reward_routing()             # +0.20 / 0.00 / -0.08 (semantic distance)
+  → reward_response_quality()    # +0.35 / +0.25 / +0.15 / -0.15
+  → reward_escalation()          # +0.10 / +0.03 / -0.10 / -0.05 (F1-style)
   total step_reward = sum of above
         ↓
 EmailObservation returned: {step_reward, cumulative_reward, action_feedback, emails: [...remaining]}
@@ -296,7 +298,7 @@ Our GRPO-trained LoRA adapter lives at:
 👉 **https://huggingface.co/Hk4crprasad/email-triage-grpo**
 
 - **Base model:** `Qwen/Qwen2.5-3B-Instruct`
-- **Training:** GRPO via TRL, 4 reward functions, 3-phase curriculum
+- **Training:** GRPO via TRL, 6 reward functions, 3-phase curriculum
 - **Adapter size:** ~43 MB
 - **Improvement over baseline:**
 
@@ -364,7 +366,7 @@ Supports 2 modes:
 2. **Local adapter mode** (`USE_LOCAL_MODEL=1`): loads trained LoRA adapter
 
 ### `server/reward.py` — The Heart of the Environment
-The `REWARD_RUBRIC` dict contains all 7 component specs — this is what judges see at `/rubric`. Each reward function is a pure function: `f(action_dict, ground_truth) → float`. No side effects, fully testable.
+The `REWARD_RUBRIC` dict contains all 8 component specs — this is what judges see at `/rubric`. Each reward function is a pure function: `f(action_dict, ground_truth) → float`. No side effects, fully testable.
 
 ### `server/environment.py` — Episode State Machine
 Tracks: `episode_id`, `step_count`, `_processed` (set of seen email IDs), cumulative reward.  
@@ -394,7 +396,7 @@ At episode end, aggregates all step rewards into 5 dimension scores and a `final
 
 ## 11. What Makes Us Unique — Judge Pitch
 
-> "We built the only hackathon environment with **7 structurally independent reward verifiers** that make reward hacking architecturally impossible. We also ran the full training pipeline — our **GRPO-trained Qwen adapter achieves +0.32 on easy, +0.26 on medium, +0.22 on hard** vs the 0-shot baseline. The environment is live, Docker-containerised, OpenEnv-core compliant (WebSocket protocol), and passes all 26 validation checks."
+> "We built the only hackathon environment with **8 structurally independent reward verifiers** that make reward hacking architecturally impossible — including F1-style escalation scoring and semantic distance grading. We also ran the full training pipeline — our **GRPO-trained Qwen adapter achieves +0.20 on easy, +0.23 on medium, +0.30 on hard** vs the 0-shot baseline. The environment is live, Docker-containerised, OpenEnv-core compliant (WebSocket protocol), and passes all 26 validation checks."
 
 ### What others likely did:
 - 1–2 combined reward signal → hackable
@@ -404,7 +406,7 @@ At episode end, aggregates all step rewards into 5 dimension scores and a `final
 ### What we did differently:
 | Dimension | Our Implementation |
 |-----------|-------------------|
-| Reward structure | 7 independent verifiers, format gate, dedup penalty, hidden keywords |
+| Reward structure | 8 independent verifiers, format gate, dedup penalty, hidden keywords, F1-style escalation, inbox completion bonus |
 | Anti-hacking | 4 structural measures, not just 1 |
 | Curriculum | 3 levels with explicit thresholds (0.60, 0.50) |
 | Reproducibility | Seeded generation, deterministic episodes |

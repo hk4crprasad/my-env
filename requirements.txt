@@ -1,29 +1,37 @@
-# ── Server runtime (installed in Docker) ──────────────────────────────
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-pydantic>=2.5.0
-openai>=1.0.0
-requests>=2.31.0
-openenv-core>=0.2.0          # Meta OpenEnv — WebSocket protocol + web UI
-motor>=3.3.0
-gradio>=4.0.0
-matplotlib>=3.8.0
-websockets>=12.0             # required by openenv-core EnvClient
+# ──────────────────────────────────────────────────────────────────────────
+#  Email Triage RL Environment — runtime requirements
+# ──────────────────────────────────────────────────────────────────────────
+#  torch is installed separately in the Dockerfile from the cu121 wheel index
+#  (T4-compatible). For local CPU-only use, install torch yourself:
+#     pip install torch --index-url https://download.pytorch.org/whl/cpu
+# ──────────────────────────────────────────────────────────────────────────
 
-# ── Local adapter inference + judge eval (optional, non-Docker) ───────
-# For local GPU runs of inference.py with USE_LOCAL_MODEL=1 and
-# wandb_eval/judge_eval.py --use-local-model
-transformers>=4.44.0
-peft>=0.12.0
-accelerate>=0.33.0
-bitsandbytes>=0.43.0
-wandb>=0.18.0
+# ── OpenEnv server (FastAPI + WebSocket) ──────────────────────────────
+fastapi
+uvicorn[standard]
+pydantic
+websockets
+openenv-core
 
-# Note:
-# - torch is NOT listed here because the right CUDA wheel depends on your GPU.
-#   Install it separately, or use the provided Colab notebook which handles
-#   this automatically: notebooks/demo_and_test.ipynb
-# - If you only run the server/API (Docker / HF Space), torch is not required.
+# ── Inference + adapter loading (Gradio "Baseline vs Trained" tab) ────
+transformers
+peft
+accelerate
+bitsandbytes
+huggingface_hub
+safetensors
+sentencepiece
 
-# ── Training deps (install separately for GRPO training) ──────────────
-# pip install -r requirements-train.txt
+# ── Demo UI ────────────────────────────────────────────────────────────
+gradio
+
+# ── Plotting / W&B (optional but referenced by judge_eval + plots) ────
+matplotlib
+wandb
+
+# ── Persistence (optional — falls back to in-memory if MongoDB absent) ─
+motor
+
+# ── HTTP clients ───────────────────────────────────────────────────────
+openai
+requests
