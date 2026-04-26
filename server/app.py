@@ -136,6 +136,16 @@ if _HAS_OPENENV_CORE:
 async def startup() -> None:
     await db.connect()
 
+    # ── MongoDB status (print so it's visible like the GPU line, not buried) ──
+    from server.database import MONGODB_URL, MONGODB_DB
+    if db.online:
+        # Mask password in URL for safe logging
+        safe_url = MONGODB_URL.split("@")[-1] if "@" in MONGODB_URL else MONGODB_URL
+        print(f"🍃 MongoDB connected: ...@{safe_url} / {MONGODB_DB}  ✅", flush=True)
+    else:
+        print(f"⚠️  MongoDB offline — leaderboard/analytics using in-memory fallback  "
+              f"(set MONGODB_URL env var to persist scores)", flush=True)
+
     # ── GPU diagnostic (appears first in logs so you can tell if T4 is live) ─
     try:
         import torch
