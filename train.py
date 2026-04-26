@@ -268,12 +268,28 @@ _DEPT_DIST = {
 _VALID_CATS  = {"spam","billing","technical","general","urgent"}
 _VALID_DEPTS = {"engineering","billing","support","management"}
 
+# ── Completion normaliser ────────────────────────────────────────────────────
+# TRL GRPOTrainer may pass completions as:
+#   - str            : decoded text (most backends)
+#   - List[str]      : tokenised text pieces  → join with ""
+#   - List[int]      : token ids              → should not happen but guard
+#   - List[List[...]] : batch of the above   → handled by reward fn loops
+def _decode_completion(comp) -> str:
+    """Always return a plain string regardless of TRL completion format."""
+    if isinstance(comp, str):
+        return comp
+    if isinstance(comp, list):
+        return "".join(str(t) for t in comp)
+    return str(comp)
+
+
 
 def reward_format(completions: List[str], prompts=None, **kwargs) -> List[float]:
     """Gate reward: valid JSON with correct email_id. Runs conceptually first."""
     rewards = []
     expected_ids = kwargs.get("email_id", [""] * len(completions))
     for comp, eid in zip(completions, expected_ids):
+        comp = _decode_completion(comp)
         action = _parse_action(comp)
         if action is None:
             rewards.append(-1.0)   # completely unparseable
@@ -295,6 +311,7 @@ def reward_classification(completions: List[str], prompts=None, **kwargs) -> Lis
     rewards = []
     gt_categories = kwargs.get("gt_category", [""] * len(completions))
     for comp, gt_cat in zip(completions, gt_categories):
+        comp = _decode_completion(comp)
         action = _parse_action(comp)
         if action is None:
             rewards.append(-0.5)
@@ -317,6 +334,7 @@ def reward_priority(completions: List[str], prompts=None, **kwargs) -> List[floa
     gt_priorities = kwargs.get("gt_priority", [3] * len(completions))
     requires      = kwargs.get("requires_priority", [True] * len(completions))
     for comp, gt_pri, req in zip(completions, gt_priorities, requires):
+        comp = _decode_completion(comp)
         if not req:
             rewards.append(0.0)
             continue
@@ -343,6 +361,7 @@ def reward_routing(completions: List[str], prompts=None, **kwargs) -> List[float
     gt_departments = kwargs.get("gt_department", ["support"] * len(completions))
     requires       = kwargs.get("requires_routing", [True] * len(completions))
     for comp, gt_dept, req in zip(completions, gt_departments, requires):
+        comp = _decode_completion(comp)
         if not req:
             rewards.append(0.0)
             continue
@@ -368,6 +387,7 @@ def reward_escalation(completions: List[str], prompts=None, **kwargs) -> List[fl
     gt_priorities  = kwargs.get("gt_priority",   [3]    * len(completions))
     gt_departments = kwargs.get("gt_department", ["support"] * len(completions))
     for comp, gt_pri, gt_dept in zip(completions, gt_priorities, gt_departments):
+        comp = _decode_completion(comp)
         action = _parse_action(comp)
         if action is None:
             rewards.append(-0.5)
@@ -391,6 +411,7 @@ def reward_response(completions: List[str], prompts=None, **kwargs) -> List[floa
     requires  = kwargs.get("requires_response",    [False] * len(completions))
     keywords  = kwargs.get("gt_expected_keywords",  [[]]   * len(completions))
     for comp, req, kws in zip(completions, requires, keywords):
+        comp = _decode_completion(comp)
         if not req:
             rewards.append(0.0)
             continue
