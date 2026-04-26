@@ -295,14 +295,21 @@ def _score_action(action: Dict[str, Any], task_id: str, seed: int) -> Tuple[floa
 
 def run_compare(task_id: str, seed: int, email_index: int) -> Tuple[str, str, str, str, str]:
     """Pick one email from the inbox; run baseline + trained; return both side-by-side."""
+    # Log immediately — BEFORE any logic — so we know the fn was called
+    print(f"🚀 run_compare START: task={task_id} seed={seed} idx={email_index}", flush=True)
     try:
         seed = int(seed); email_index = int(email_index)
     except (ValueError, TypeError):
         return "Invalid seed/index", "", "", "", ""
 
-    env = EmailTriageEnvironment()
-    obs = env.reset(task_id=task_id, seed=seed)
-    od  = obs.model_dump()
+    try:
+        env = EmailTriageEnvironment()
+        obs = env.reset(task_id=task_id, seed=seed)
+        od  = obs.model_dump()
+    except Exception as e:
+        print(f"❌ env.reset() failed: {type(e).__name__}: {e}", flush=True)
+        return f"❌ env.reset() error: {e}", "", "", "", ""
+
     emails = od.get("emails", [])
     if email_index < 0 or email_index >= len(emails):
         return f"Index {email_index} out of range (0..{len(emails)-1})", "", "", "", ""
@@ -310,12 +317,15 @@ def run_compare(task_id: str, seed: int, email_index: int) -> Tuple[str, str, st
     email = emails[email_index]
     email_md = format_email(email)
 
+    print(f"📨 Email loaded: {email.get('email_id')} — now loading model...", flush=True)
     try:
-        print(f"🚀 run_compare called: task={task_id}, seed={seed}, idx={email_index}",flush=True)
         model, tokenizer, info = _load_adapter_lazy()
     except gr.Error as e:
-        print(f"❌ Model loading failed: {e}",flush=True)
+        print(f"❌ Model loading failed: {type(e).__name__}: {e}", flush=True)
         return email_md, "", "", "", f"⚠ {e}"
+    except Exception as e:
+        print(f"❌ Unexpected model error: {type(e).__name__}: {e}", flush=True)
+        return email_md, "", "", "", f"❌ Unexpected error: {type(e).__name__}: {e}"
 
     msgs, _ = _build_inference_prompt(email, od.get("task_description", ""))
 
