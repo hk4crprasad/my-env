@@ -115,40 +115,90 @@ def format_email_prompt(email: Dict[str, Any], task_description: str) -> str:
     return "\n".join(lines)
 
 
-def build_dataset(task_ids: List[str], seed: int = 42) -> List[Dict[str, Any]]:
-    """Build a training dataset by generating email prompts from the environment."""
+def build_dataset(
+    task_ids: List[str],
+    seed: int = 42,
+    num_seeds: int = 1,
+    jsonl_path: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Build a training dataset from the environment.
+
+    Args:
+        task_ids:   which task levels to include
+        seed:       starting seed (reproducible)
+        num_seeds:  number of seeds to run per task — each seed gives a
+                    differently shuffled inbox. Use num_seeds=50+ for a
+                    large dataset. Default=1 (legacy behaviour).
+        jsonl_path: if given, load a pre-built JSONL file instead of
+                    generating on the fly (faster for large datasets).
+    """
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+    # ── Option A: load pre-built dataset ────────────────────────────────────
+    if jsonl_path and os.path.exists(jsonl_path):
+        print(f"📂 Loading pre-built dataset from {jsonl_path} ...")
+        examples = []
+        with open(jsonl_path) as f:
+            for line in f:
+                ex = json.loads(line.strip())
+                if ex.get("task_id") in task_ids:
+                    # Re-wrap prompt as chat messages (stored as str in JSONL)
+                    prompt_str = ex.pop("prompt")
+                    ex["prompt"] = [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user",   "content": prompt_str},
+                    ]
+                    examples.append(ex)
+        print(f"  → {len(examples)} examples loaded")
+        return examples
+
+    # ── Option B: generate on the fly (multi-seed) ──────────────────────────
     from server.email_generator import generate_emails
     from server.tasks import get_task
 
+    seen_bodies: set = set()
     examples = []
+
     for task_id in task_ids:
         task = get_task(task_id)
-        emails, ground_truths = generate_emails(task_id, seed)
-        truth_map = {gt.email_id: gt for gt in ground_truths}
+        task_count = 0
+        for s in range(seed, seed + num_seeds):
+            emails, ground_truths = generate_emails(task_id, s)
+            truth_map = {gt.email_id: gt for gt in ground_truths}
 
-        for email in emails:
-            prompt = format_email_prompt(email.model_dump(), task.description)
-            gt = truth_map[email.email_id]
-            examples.append({
-                "prompt": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                # Ground truth stored as metadata for reward functions
-                "email_id": email.email_id,
-                "task_id": task_id,
-                "gt_category": gt.category,
-                "gt_priority": gt.priority,
-                "gt_department": gt.department,
-                "gt_requires_response": gt.requires_response,
-                "gt_expected_keywords": gt.expected_keywords,
-                "requires_priority": task.requires_priority,
-                "requires_routing": task.requires_routing,
-                "requires_response": task.requires_response,
-                "curriculum_level": task.curriculum_level,
-            })
+            for email in emails:
+                gt = truth_map[email.email_id]
 
+                # Deduplicate: same body content appears across seeds
+                dedup_key = (gt.category, email.body[:80].strip())
+                if dedup_key in seen_bodies:
+                    continue
+                seen_bodies.add(dedup_key)
+
+                prompt = format_email_prompt(email.model_dump(), task.description)
+                examples.append({
+                    "prompt": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user",   "content": prompt},
+                    ],
+                    "email_id":              email.email_id,
+                    "task_id":               task_id,
+                    "gt_category":           gt.category,
+                    "gt_priority":           gt.priority,
+                    "gt_department":         gt.department,
+                    "gt_requires_response":  gt.requires_response,
+                    "gt_expected_keywords":  gt.expected_keywords or [],
+                    "gt_should_escalate":    getattr(gt, "should_escalate", False),
+                    "requires_priority":     task.requires_priority,
+                    "requires_routing":      task.requires_routing,
+                    "requires_response":     task.requires_response,
+                    "curriculum_level":      task.curriculum_level,
+                })
+                task_count += 1
+
+        print(f"  [{task_id}] {task_count} examples from {num_seeds} seeds")
+
+    print(f"  Total dataset size: {len(examples)} examples")
     return examples
 
 
