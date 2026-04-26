@@ -47,8 +47,10 @@ from server.reward import REWARD_RUBRIC
 
 
 # Trained adapter on HF Hub (LoRA over Qwen2.5-3B-Instruct, ~43 MB)
-BASE_MODEL_ID    = os.environ.get("BASE_MODEL_ID",    "meta-llama/Llama-3.2-1B-Instruct")
+BASE_MODEL_ID    = os.environ.get("BASE_MODEL_ID",    "Qwen/Qwen3.5-2B")
 ADAPTER_MODEL_ID = os.environ.get("ADAPTER_MODEL_ID", "Hk4crprasad/email-triage-grpo")
+# Qwen3.5-2B: thinking mode disabled via /no_think in system prompt
+# Architecture: Gated-DeltaNet + Gated-Attention hybrid; LoRA on Attention layers only
 HF_TOKEN         = os.environ.get("HF_TOKEN") or os.environ.get("API_KEY")
 
 
@@ -188,7 +190,8 @@ def _load_adapter_lazy() -> Tuple[Any, Any, str]:
 
         # ── Dispatch by compute capability AND VRAM ─────────────────────
         supports_bf16 = cc_major >= 8
-        use_4bit = (not supports_bf16) or (vram_gb < 12)
+        # Qwen3.5-2B is ~1.5 GB in 4-bit — always use 4-bit for fast loading
+        use_4bit = True
 
         if use_4bit:
             print(f"📥 Downloading base model in 4-bit NF4: {BASE_MODEL_ID} ...",flush=True)

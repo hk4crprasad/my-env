@@ -44,8 +44,8 @@ from typing import Any, Dict, List, Optional
 
 def parse_args():
     p = argparse.ArgumentParser(description="GRPO training for Email Triage RL Environment")
-    p.add_argument("--model", default="meta-llama/Llama-3.2-1B-Instruct",
-                   help="Base model (default: meta-llama/Llama-3.2-1B-Instruct)")
+    p.add_argument("--model", default="Qwen/Qwen3.5-2B",
+                   help="Base model (default: Qwen/Qwen3.5-2B)")
     p.add_argument("--task", default="curriculum",
                    choices=["easy", "medium", "hard", "curriculum"],
                    help="Task to train on. 'curriculum' runs easy→medium→hard.")
@@ -75,26 +75,21 @@ def parse_args():
 #  Dataset construction from the environment
 # ─────────────────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are an expert email triage agent. For each email, respond with a single valid JSON object:
-{
-  "email_id": "<id>",
-  "category": "<spam|billing|technical|general|urgent>",
-  "priority": <1-5>,
-  "department": "<engineering|billing|support|management>",
-  "response_draft": "<reply text or null>",
-  "escalate": <true|false>
-}
+SYSTEM_PROMPT = """/no_think
+You are an email triage agent. Respond with ONLY a JSON object — no explanation, no markdown, no thinking tags.
 
-Categories: spam=unsolicited/phishing, billing=payments/invoices, technical=bugs/API,
-general=inquiries/requests, urgent=outages/security/legal
+EXACT FORMAT (replace values, keep all keys):
+{"email_id":"EMAIL_ID_HERE","category":"billing","priority":3,"department":"billing","response_draft":null,"escalate":false}
 
-Priorities: 1=critical(system down/breach), 2=high(degradation), 3=medium(discrepancy),
-4=low(feature request), 5=lowest(spam/auto)
+RULES:
+- email_id : copy EXACTLY from "Email ID:" field — do not change it
+- category : spam | billing | technical | general | urgent
+- priority : 1(critical outage/breach) 2(high) 3(medium) 4(low) 5(spam/auto)
+- department: engineering | billing | support | management
+- response_draft: null unless email needs a reply — then write 1-2 sentences
+- escalate : true only if priority=1 OR department=management
 
-Departments: engineering=bugs/API/security, billing=payments/invoices,
-support=general/account/spam, management=legal/compliance/escalations
-
-Respond with ONLY the JSON. No other text."""
+OUTPUT ONLY THE JSON OBJECT. NO OTHER TEXT."""
 
 
 def format_email_prompt(email: Dict[str, Any], task_description: str) -> str:
@@ -285,24 +280,61 @@ def _decode_completion(comp) -> str:
 
 
 def reward_format(completions: List[str], prompts=None, **kwargs) -> List[float]:
-    """Gate reward: valid JSON with correct email_id. Runs conceptually first."""
+    """Graduated format reward — ensures reward_std > 0 so GRPO has a gradient.
+
+    The root cause of reward=-2 / std=0 stalls is returning the same -1.0 for
+    ALL completions when the model hasn't learned JSON yet.  With std=0, GRPO
+    advantage = 0 for every sample → loss = 0 → zero gradient → no learning.
+
+    Graduated scale creates a spectrum from 'no JSON attempt' to 'perfect JSON'
+    so completions at different stages of correctness get different rewards,
+    giving GRPO non-zero variance to work with even at cold-start.
+
+    Levels (low → high):
+      -1.0  no braces, no keywords — completely off format
+      -0.7  has some braces but no required keys
+      -0.5  has braces + one required key (partial attempt)
+      -0.3  has both required keys but JSON is malformed (close attempt)
+       0.0  valid JSON but missing email_id or category
+      -0.2  valid JSON, has fields, but wrong email_id
+       0.1  valid JSON with email_id + category, wrong id
+       0.5  valid JSON, correct email_id, correct format  ← target
+    """
     rewards = []
     expected_ids = kwargs.get("email_id", [""] * len(completions))
     for comp, eid in zip(completions, expected_ids):
         comp = _decode_completion(comp)
+
+        # ── Try to parse valid JSON first ────────────────────────────────
         action = _parse_action(comp)
-        if action is None:
-            rewards.append(-1.0)   # completely unparseable
+        if action is not None:
+            has_id  = bool(action.get("email_id"))
+            has_cat = bool(action.get("category"))
+            id_ok   = action.get("email_id") == eid
+            if has_id and has_cat and id_ok:
+                rewards.append(0.5)    # ✅ perfect: valid + correct id
+            elif has_id and has_cat:
+                rewards.append(0.1)    # valid shape, wrong email_id
+            elif has_id or has_cat:
+                rewards.append(0.0)    # valid JSON but missing a required field
+            else:
+                rewards.append(-0.2)   # JSON without required fields
             continue
-        has_id  = bool(action.get("email_id"))
-        has_cat = bool(action.get("category"))
-        id_ok   = action.get("email_id") == eid
-        if has_id and has_cat and id_ok:
-            rewards.append(0.5)    # well-formed + correct id
-        elif has_id and has_cat:
-            rewards.append(0.1)    # valid shape but wrong email_id
+
+        # ── No valid JSON — graduated penalties based on proximity ───────
+        # (these create non-zero std so GRPO can differentiate attempts)
+        has_braces  = "{" in comp and "}" in comp
+        has_eid_key = '"email_id"' in comp
+        has_cat_key = '"category"' in comp
+
+        if has_eid_key and has_cat_key and has_braces:
+            rewards.append(-0.3)   # right keys, braces, but malformed JSON
+        elif has_braces and (has_eid_key or has_cat_key):
+            rewards.append(-0.5)   # has braces + one key
+        elif has_braces:
+            rewards.append(-0.7)   # has braces but no required keys
         else:
-            rewards.append(-0.5)
+            rewards.append(-1.0)   # no JSON attempt at all
     return rewards
 
 

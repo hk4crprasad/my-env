@@ -32,7 +32,7 @@ tags:
 
 ## TL;DR
 
-We built an **OpenEnv-compliant Multi-Agent RL environment** combining **Theme #1 (Multi-Agent Interactions)** and **Theme #3.2 (Personalized Tasks)**. Three specialist agents — Analyst, Router, Responder — cooperate on each email step using a sequential chain with **theory-of-mind** and **coalition** scoring. We trained `meta-llama/Llama-3.2-1B-Instruct` using **GRPO** on a 3-level curriculum. The result: hard-task triage score improves from **0.29 → 0.59** (+0.30). Individually-correct but inconsistent agent decisions are penalised, creating genuine multi-agent coordination pressure. No value model. No learned reward model. Pure verifiable RL.
+We built an **OpenEnv-compliant Multi-Agent RL environment** combining **Theme #1 (Multi-Agent Interactions)** and **Theme #3.2 (Personalized Tasks)**. Three specialist agents — Analyst, Router, Responder — cooperate on each email step using a sequential chain with **theory-of-mind** and **coalition** scoring. We trained `Qwen/Qwen3.5-2B` using **GRPO** on a 3-level curriculum. The result: hard-task triage score improves from **0.29 → 0.59** (+0.30). Individually-correct but inconsistent agent decisions are penalised, creating genuine multi-agent coordination pressure. No value model. No learned reward model. Pure verifiable RL.
 
 ---
 
@@ -573,7 +573,7 @@ Email
 
 ### Role-conditioned GRPO
 
-All three agents are the **same `meta-llama/Llama-3.2-1B-Instruct` model** trained with different system prompts. This is role-conditioned training — the model learns to behave differently based on which role it's playing.
+All three agents are the **same `Qwen/Qwen3.5-2B` model** trained with different system prompts. This is role-conditioned training — the model learns to behave differently based on which role it's playing.
 
 Each email generates 3 training examples (one per role). The dataset is role-labelled so the reward functions can apply role-appropriate scoring:
 

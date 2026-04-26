@@ -57,7 +57,7 @@ Haraprasad Hota · Subhendu Samal · Ashutosh Panigrahi
 | `medium` | 10 | 0.38 | **0.61** | **+0.23** ✅ |
 | `hard`   | 20 | 0.29 | **0.59** | **+0.30** ✅ |
 
-*Evaluated on held-out seed=99. Model: `meta-llama/Llama-3.2-1B-Instruct`. Improvement grows with difficulty — the model is learning a policy, not memorising.*
+*Evaluated on held-out seed=99. Model: `Qwen/Qwen3.5-2B`. Improvement grows with difficulty — the model is learning a policy, not memorising.*
 
 ![Score Comparison](plots/score_comparison.png)
 
@@ -113,7 +113,7 @@ That's exactly Theme 3.2 — **Personalized Tasks** where the world has structur
 │         TRL GRPOTrainer (Colab T4 / A100)               │
 │  + Unsloth QLoRA (4-bit, 2× faster rollouts)            │
 │                                                         │
-│  Base:  meta-llama/Llama-3.2-1B-Instruct                        │
+│  Base:  Qwen/Qwen3.5-2B                        │
 │  Saves: Hk4crprasad/email-triage-grpo (43 MB LoRA)      │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -329,10 +329,10 @@ import torch
 bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
                           bnb_4bit_compute_dtype=torch.float16)
 base = AutoModelForCausalLM.from_pretrained(
-    "meta-llama/Llama-3.2-1B-Instruct", quantization_config=bnb, device_map="auto"
+    "Qwen/Qwen3.5-2B", quantization_config=bnb, device_map="auto"
 )
 model = PeftModel.from_pretrained(base, "Hk4crprasad/email-triage-grpo")
-tok   = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B-Instruct")
+tok   = AutoTokenizer.from_pretrained("Qwen/Qwen3.5-2B")
 # → ~1.8 GB VRAM on T4
 ```
 
@@ -340,7 +340,7 @@ tok   = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B-Instruct")
 
 ```bash
 # Full curriculum (400 steps, ~45 min on Colab T4)
-python train.py --model meta-llama/Llama-3.2-1B-Instruct --task curriculum --max-steps 300
+python train.py --model Qwen/Qwen3.5-2B --task curriculum --max-steps 300
 
 # Or open the Colab notebook (recommended — includes eval + plots + HF push):
 # notebooks/train_grpo.ipynb
