@@ -294,15 +294,17 @@ def _score_action(action: Dict[str, Any], task_id: str, seed: int) -> Tuple[floa
     }
 
 
-def run_compare(task_id: str, seed: int, email_index: int, progress: gr.Progress = gr.Progress()) -> Tuple[str, str, str, str, str]:
-    """Pick one email from the inbox; run baseline + trained; return both side-by-side."""
-    # Log immediately — BEFORE any logic — so we know the fn was called
+def run_compare(task_id: str, seed: int, email_index: int):
+    """Generator: yields live status updates to the UI as the model loads and runs."""
     print(f"🚀 run_compare START: task={task_id} seed={seed} idx={email_index}", flush=True)
-    progress(0, desc="Loading email…")
+
+    # ── Step 1: load email ────────────────────────────────────────────────
+    yield "", "", "", "", "⏳ **Step 1/4** — Loading email from environment…"
     try:
         seed = int(seed); email_index = int(email_index)
     except (ValueError, TypeError):
-        return "Invalid seed/index", "", "", "", ""
+        yield "Invalid seed/index", "", "", "", "❌ seed/index must be integers"
+        return
 
     try:
         env = EmailTriageEnvironment()
@@ -310,45 +312,60 @@ def run_compare(task_id: str, seed: int, email_index: int, progress: gr.Progress
         od  = obs.model_dump()
     except Exception as e:
         print(f"❌ env.reset() failed: {type(e).__name__}: {e}", flush=True)
-        return f"❌ env.reset() error: {e}", "", "", "", ""
+        yield f"❌ env.reset() error: {e}", "", "", "", "❌ Environment error"
+        return
 
     emails = od.get("emails", [])
     if email_index < 0 or email_index >= len(emails):
-        return f"Index {email_index} out of range (0..{len(emails)-1})", "", "", "", ""
+        yield f"Index {email_index} out of range (0..{len(emails)-1})", "", "", "", "❌ Index out of range"
+        return
 
-    email = emails[email_index]
+    email    = emails[email_index]
     email_md = format_email(email)
+    print(f"📨 Email loaded: {email.get('email_id')}", flush=True)
 
-    progress(0.05, desc="Loading model… (first run downloads ~3 GB, ~60 s on T4)")
-    print(f"📨 Email loaded: {email.get('email_id')} — now loading model...", flush=True)
+    # ── Step 2: GPU check + model load ───────────────────────────────────
     try:
         import torch
         if not torch.cuda.is_available():
-            msg = (
-                "⚠ No GPU detected — adapter inference requires a CUDA GPU. "
-                "Check that this Space is on the T4 hardware tier and that "
-                "`hardware: t4-small` is in the README.md frontmatter."
-            )
-            print(f"❌ {msg}", flush=True)
-            return email_md, "", "", "", msg
-        model, tokenizer, info = _load_adapter_lazy()
-    except gr.Error as e:
-        print(f"❌ Model loading failed: {type(e).__name__}: {e}", flush=True)
-        return email_md, "", "", "", f"⚠ {e}"
+            msg = "❌ No GPU — set `hardware: t4-small` in README.md and restart Space"
+            print(msg, flush=True)
+            yield email_md, "", "", "", msg
+            return
+        props   = torch.cuda.get_device_properties(0)
+        gpu_str = f"{props.name}  cc={props.major}.{props.minor}  VRAM={props.total_memory/1e9:.1f} GB"
     except Exception as e:
-        print(f"❌ Unexpected model error: {type(e).__name__}: {e}", flush=True)
-        return email_md, "", "", "", f"❌ Unexpected error: {type(e).__name__}: {e}"
+        yield email_md, "", "", "", f"❌ torch error: {e}"
+        return
 
-    msgs, _ = _build_inference_prompt(email, od.get("task_description", ""))
+    if _MODEL_STATE["loaded"]:
+        status = f"⚡ **Step 2/4** — Model already in VRAM ({gpu_str}) — running instantly"
+    else:
+        status = (
+            f"⏳ **Step 2/4** — Downloading model to GPU ({gpu_str})\n\n"
+            f"First run downloads **~3 GB** — expect **60–90 s** on T4.\n"
+            f"Watch the container **Logs** tab for progress. Subsequent runs are instant."
+        )
+    print(f"🖥  {gpu_str}", flush=True)
+    yield email_md, "", "", "", status
 
-    progress(0.50, desc="Running baseline (adapter OFF)…")
+    try:
+        model, tokenizer, info = _load_adapter_lazy()
+    except (gr.Error, Exception) as e:
+        print(f"❌ Model loading failed: {type(e).__name__}: {e}", flush=True)
+        yield email_md, "", "", "", f"❌ Model loading failed: {e}"
+        return
+
+    # ── Step 3: baseline inference ────────────────────────────────────────
+    yield email_md, "*(running…)*", "*(waiting…)*", "", f"⏳ **Step 3/4** — Running baseline (adapter OFF)…"
     print("🔵 Generating baseline output…", flush=True)
+    msgs, _ = _build_inference_prompt(email, od.get("task_description", ""))
     base_text = _generate(model, tokenizer, msgs, use_adapter=False)
 
-    progress(0.75, desc="Running trained model (adapter ON)…")
+    # ── Step 4: trained inference ─────────────────────────────────────────
+    yield email_md, "*(done)*", "*(running…)*", "", f"⏳ **Step 4/4** — Running trained model (adapter ON)…"
     print("🟢 Generating trained output…", flush=True)
     train_text = _generate(model, tokenizer, msgs, use_adapter=True)
-    progress(0.95, desc="Scoring actions…")
 
     def _to_action(text: str) -> Optional[Dict[str, Any]]:
         try:
@@ -393,12 +410,30 @@ def run_compare(task_id: str, seed: int, email_index: int, progress: gr.Progress
         f"Δ reward (trained − baseline): **{train_reward - base_reward:+.2f}**"
     )
 
-    return email_md, base_md, train_md, truth_md, info
+    yield email_md, base_md, train_md, truth_md, info
 
 
 # ─────────────────────────────────────────────────────────────────────────
 #  Build UI
 # ─────────────────────────────────────────────────────────────────────────
+
+def _gpu_status_md() -> str:
+    """Compute GPU status string once at UI build time."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            p = torch.cuda.get_device_properties(0)
+            return (
+                f"> 🖥 **GPU ready:** {p.name}  |  "
+                f"cc={p.major}.{p.minor}  |  "
+                f"VRAM={p.total_memory/1e9:.1f} GB  |  "
+                f"CUDA {torch.version.cuda}  ✅  \n"
+                f"> Model is **not loaded yet** — click ▶ Run to start download (~60 s first run)."
+            )
+        return "> ⚠ **No GPU detected.** Adapter inference requires T4. Check Space hardware tier."
+    except Exception as e:
+        return f"> ⚠ Could not detect GPU: `{e}`"
+
 
 def build_ui() -> gr.Blocks:
     rubric_md = "## Reward Rubric (8 independent components)\n\n"
@@ -407,6 +442,7 @@ def build_ui() -> gr.Blocks:
             f"- **{k}**: {v['description']} "
             f"(range: `{v['min_reward']:+.2f}` … `{v['max_reward']:+.2f}`)\n"
         )
+    gpu_md = _gpu_status_md()
 
     with gr.Blocks(title="Email Triage RL") as demo:
         gr.Markdown(
@@ -485,18 +521,17 @@ def build_ui() -> gr.Blocks:
                     "### Side-by-side inference\n"
                     "Loads `Qwen/Qwen2.5-3B-Instruct` once, then toggles the LoRA "
                     f"adapter `{ADAPTER_MODEL_ID}` on/off. Both runs see the **same** email; "
-                    "their actions are scored by the live reward function and shown next to ground truth.\n\n"
-                    "⏳ **First click downloads ~3 GB and loads the model — expect 60–90 s on T4.** "
-                    "A progress bar will appear. Subsequent runs are fast (model stays in VRAM). "
-                    "Requires the Space to be on the **T4 GPU** hardware tier."
+                    "their actions are scored by the live reward function and shown next to ground truth."
                 )
+                # GPU status shown immediately on page load — no click needed
+                gr.Markdown(gpu_md)
                 with gr.Row():
                     with gr.Column(scale=1):
                         cmp_task  = gr.Dropdown(list_task_ids(), value="hard", label="Task")
                         cmp_seed  = gr.Number(value=42, label="Seed", precision=0)
                         cmp_idx   = gr.Number(value=0, label="Email index (0-based)", precision=0)
                         run_btn   = gr.Button("▶ Run side-by-side", variant="primary")
-                        info_md   = gr.Markdown("*(model not yet loaded)*")
+                        info_md   = gr.Markdown("*(click ▶ Run to start)*")
                     with gr.Column(scale=2):
                         cmp_email = gr.Markdown("(no email loaded)")
 
