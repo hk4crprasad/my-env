@@ -423,7 +423,7 @@ Failure to verify within 12 hours will result in permanent account termination.
 — Security Team
 ```
 
-### Before training (zero-shot Llama-3.2-1B)
+### Before training (zero-shot Qwen3.5-2B)
 
 ```json
 {
@@ -521,7 +521,7 @@ Email
   │
   ▼
 ┌──────────────────────────────────────────────────┐
-│  Agent 1: Analyst  (Llama-3.2-1B, role=analyst)  │
+│  Agent 1: Analyst  (Qwen3.5-2B, role=analyst)  │
 │                                                   │
 │  Input:  email content                            │
 │  Output: {category, priority, signals[], conf}    │
@@ -588,9 +588,9 @@ MULTI_AGENT_REWARD_FUNCTIONS = [
 
 The `reward_coordination_grpo` function checks the agent's `role` field in kwargs and applies the appropriate reward logic. This is the key innovation: a single reward function that scores differently based on which agent is being trained.
 
-### Why Llama-3.2-1B for multi-agent?
+### Why Qwen3.5-2B for multi-agent?
 
-A 3B model would be too slow for 3-agent inference per step. `Llama-3.2-1B-Instruct` in 4-bit NF4 uses ~500 MB VRAM and generates a JSON response in ~1 second. This means one full 3-agent email step takes ~3 seconds — fast enough for real training.
+`Qwen3.5-2B` in 4-bit NF4 uses ~1.5 GB VRAM and generates a JSON response in ~1.5 seconds. One full 3-agent step takes ~5 seconds — fast enough for real training, and far cheaper than running a 7B model.
 
 The 1B model is also sufficient to show measurable RL improvement. The architecture is what matters, not the parameter count.
 

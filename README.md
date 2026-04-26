@@ -38,14 +38,14 @@ Haraprasad Hota · Subhendu Samal · Ashutosh Panigrahi
 | **Validation suite** (26 checks, CPU only) | `python scripts/validate_env.py` | 60 s |
 | **Full re-run** — training + eval + plots | [train_grpo.ipynb](notebooks/train_grpo.ipynb) on free Colab T4 | ~45 min |
 
-> **📝 Blog**: [We Trained an LLM to Triage Emails with GRPO](https://huggingface.co/blog/Hk4crprasad/email-triage-grpo-blog)  
-> **🎯 Theme**: World Modeling — Personalized Tasks (#3.2)
+> **📝 Blog**: [Multi-Agent Email Triage with GRPO](https://huggingface.co/blog/Hk4crprasad/email-triage-grpo-blog)  
+> **🎯 Themes**: Multi-Agent Interactions (#1) + World Modeling — Personalized Tasks (#3.2)
 
 ---
 
 ## 🎯 The One-Sentence Pitch
 
-> **We built a production-grade OpenEnv RL environment with 8 independent deterministic reward verifiers and a 3-level curriculum, trained Llama-3.2-1B-Instruct with GRPO, and improved its hard-task email triage score from 0.29 → 0.59 (+0.30) in 400 steps on a free Colab T4.**
+> **We built an OpenEnv multi-agent RL environment (Theme #1 + #3.2) where 3 specialist agents — Analyst, Router, Responder — cooperate on each email step using theory-of-mind and coalition rewards. Trained `Qwen/Qwen3.5-2B` with GRPO on a 3-level curriculum. Hard-task score: 0.29 → 0.59 (+0.30) in 400 steps on a free Colab T4.**
 
 ---
 
@@ -304,7 +304,8 @@ curl https://hk4crprasad-email-triage-env.hf.space/rubric | python -m json.tool
 
 Visit [hk4crprasad-email-triage-env.hf.space/demo](https://hk4crprasad-email-triage-env.hf.space/demo):
 - **🎮 Tab 1**: Triage emails manually — see the exact reward feedback the RL trainer sees
-- **🆚 Tab 2**: Side-by-side: base `Llama-3.2-1B` vs trained LoRA adapter on the same email
+- **🆚 Tab 2**: Side-by-side: base `Qwen3.5-2B` vs trained LoRA adapter on the same email
+- **🤝 Tab 3**: Multi-agent: all 3 agents run sequentially, live coordination + theory-of-mind scores
 
 ### Option 3: Local server
 
