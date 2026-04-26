@@ -151,6 +151,17 @@ async def startup() -> None:
     except Exception as e:
         print(f"ℹ openenv-core WebSocket not available ({type(e).__name__}) — REST API only")
 
+    # ── Mount Gradio demo at /demo (manual play + adapter vs baseline) ───
+    if os.environ.get("DISABLE_GRADIO", "").lower() != "true":
+        try:
+            import gradio as gr  # noqa: F401
+            from demo import build_ui
+            blocks = build_ui()
+            gr.mount_gradio_app(app, blocks, path="/demo")
+            print("✅ Gradio demo mounted at /demo")
+        except Exception as e:
+            print(f"ℹ Gradio demo not mounted ({type(e).__name__}: {e})")
+
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
@@ -232,6 +243,11 @@ async def root():
         "tasks": list_task_ids(),
         "reward_components": list(REWARD_RUBRIC.keys()),
         "stats": stats,
+        "ui": {
+            "gradio_demo": "/demo",
+            "openenv_websocket": "/ws",
+            "openapi_docs": "/docs",
+        },
     }
 
 

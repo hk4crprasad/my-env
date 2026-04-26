@@ -245,15 +245,22 @@ docker build -t email-triage-env .
 docker run -p 7860:7860 --env-file .env email-triage-env
 ```
 
-### Run the Gradio demo (interactive)
+### Interactive Gradio demo
+
+The demo is **mounted on the live HF Space** at [`/demo`](https://hk4crprasad-email-triage-env.hf.space/demo) — same uvicorn process serves the OpenEnv API and the UI. Two tabs:
+
+1. **🎮 Triage one email** — manual play: pick an action, see per-step reward
+2. **🆚 Baseline vs Trained adapter** — side-by-side inference: same email → base `Qwen/Qwen2.5-3B-Instruct` vs the GRPO-trained LoRA, both rewards scored by the live verifier. Adapter is lazy-loaded once on the Space's GPU and toggled via `enable_adapter_layers()` / `disable_adapter_layers()`.
+
+Run locally:
 
 ```bash
 pip install gradio
-python demo.py             # local on :7861
-python demo.py --share     # public link
+python demo.py             # standalone on :7861
+python demo.py --share     # public Gradio link
 ```
 
-The demo lets a human play through an episode interactively, seeing each email and getting reward feedback per step — same loop the trained model sees.
+When the FastAPI server is running, the same UI is also at `http://localhost:7860/demo`.
 
 ### Validate the environment
 
@@ -291,12 +298,15 @@ Logs environment validation, reward component separation, baseline LLM scores, a
 | `/reset` | POST | Start episode, receive `session_id` |
 | `/step` | POST | Submit action, get observation + reward |
 | `/state` | GET | Current step count and episode ID |
-| `/rubric` | GET | All 7 reward component definitions |
+| `/rubric` | GET | All 8 reward component definitions |
 | `/curriculum` | GET | Task progression with advancement thresholds |
 | `/tasks` | GET | Task configs with scoring weights |
 | `/schema` | GET | JSON schemas for Action and Observation |
 | `/leaderboard` | GET | Top scores (filterable by task) |
 | `/analytics` | GET | Per-task aggregated stats |
+| `/demo` | GET | Gradio UI (manual play + baseline vs trained adapter) |
+| `/ws` | WS  | openenv-core WebSocket protocol (TRL/Unsloth/ART/Oumi) |
+| `/docs` | GET | OpenAPI/Swagger docs |
 
 ---
 
