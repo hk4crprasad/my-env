@@ -45,6 +45,10 @@ EXPOSE 7860
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -fsS http://localhost:7860/health || exit 1
 
+# Entrypoint handles loading HF Spaces secrets (single ENV secret or individual ones)
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
 # Single worker — the lazy-loaded LoRA adapter must live in one process to avoid
 # duplicate VRAM use. Multi-worker would OOM on T4.
-CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]
+ENTRYPOINT ["/app/entrypoint.sh"]
